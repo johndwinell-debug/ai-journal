@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// The journal belongs to one person. The first account to sign in claims it
+// by creating config/owner; after that, only that account can read or write.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/config/owner)
+        && get(/databases/$(database)/documents/config/owner).data.uid == request.auth.uid;
+    }
+
+    match /config/owner {
+      allow read: if request.auth != null;
+      // Claimable once, by a signed-in user, for themselves. Never changed afterwards.
+      allow create: if request.auth != null
+        && !exists(/databases/$(database)/documents/config/owner)
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /records/{id} {
+      allow read, write: if isOwner();
+    }
+
+    match /links/{id} {
+      allow read, write: if isOwner();
+    }
+  }
+}

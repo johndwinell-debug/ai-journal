@@ -1,0 +1,10 @@
+node_modules/
+dist/
+lib/
+.firebase/
+.firebaserc
+*.log
+.env
+.env.*
+!.env.example
+.secret.local
