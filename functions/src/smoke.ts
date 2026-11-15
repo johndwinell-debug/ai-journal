@@ -101,6 +101,15 @@ async function main() {
   const more = await out('append_messages', { thread_id: thread.id, messages: [{ role: 'john', text: 'A later point.' }] });
   check('append_messages extends the transcript', /now holds 3/.test(more.text));
 
+  const again = await out('append_messages', {
+    thread_id: thread.id,
+    messages: [{ role: 'john', text: 'A later point.' }, { role: 'claude', text: 'A reply to it.' }],
+  });
+  check('continuing a discussion skips what is already saved', /Added 1 messages.*now holds 4.*Skipped 1/.test(again.text), again.text);
+  const cont = await out('save_thread', { title: 'ignored', thread_id: thread.id, summary: 'The whole discussion, updated.', notes: [{ title: 'A new idea', text: 'From the continuation.', originator: 'john', topics: [] }] });
+  const contThread = (await store.all()).records.find((r) => r.id === thread.id) as { title: string; date: string; summary: string; messages: unknown[] };
+  check('new notes attach to the same discussion', /Attached the digest/.test(cont.text) && contThread.title === 'Language as more than a record' && contThread.date === '2026-10-02' && contThread.summary === 'The whole discussion, updated.' && contThread.messages.length === 4);
+
   const undated = await out('save_thread', { title: 'No date', summary: 's', messages: [{ role: 'john', text: 'hello' }] });
   const undatedRec = (await store.all()).records.find((r) => (r as { title?: string }).title === 'No date') as { dateConfirmed?: boolean };
   check('a save with no date is marked unconfirmed', undatedRec.dateConfirmed === false && /unconfirmed/.test(undated.text));
@@ -121,7 +130,7 @@ async function main() {
   check('an unknown thread id saves nothing', /Nothing was saved/.test(bad.text));
 
   const rec = await out('get_record', { id: thread.id });
-  check('drill-down returns the transcript', /\*\*John:\*\*\nLanguage is culture and knowledge\./.test(rec.text));
+  check('drill-down returns the transcript', /\*\*John:\*\*\nLanguage is culture and knowledge\./.test(rec.text) && /A reply to it\./.test(rec.text));
   const missing = await out('get_briefing', { topic: 'Nope' });
   check('unknown topic lists the real ones', /Topics in the journal: Cultural evolution, Evolution, Language/.test(missing.text));
 

@@ -82,6 +82,9 @@ In any Claude conversation, with the connector enabled:
 
 - "Save this to my journal." State the date for an older discussion
   ("from March 3rd"); without one it is dated today and marked unconfirmed.
+- "Add the new part of this discussion to my journal." For a conversation
+  that was saved earlier and has continued; the new messages and notes join
+  the existing discussion.
 - For a long discussion Claude sends the transcript in parts. If that fails,
   open Discussions in the app, choose "Add a discussion by pasting", paste the
   whole conversation, then tell Claude: "Distill discussion <id> in my journal."

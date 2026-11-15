@@ -65,6 +65,7 @@ export function buildServer(store: Store): McpServer {
         "Save the current discussion to John's journal when he asks (for example, \"save this to my journal\").",
         'Send the full transcript in order, both sides, as faithfully as you can: do not summarise or shorten messages.',
         'For a long discussion, send the first part of the transcript here, then send the rest in order with append_messages, using the thread id this call returns. Do not drop or condense messages to make it fit.',
+        'If this conversation was saved before and has continued since (an earlier save_thread result with its thread id is visible above), do not save it again as a new discussion: send only the messages that came after that save with append_messages, then call save_thread with that thread_id, an updated summary of the whole discussion, and only the new notes and questions.',
         'If John has already pasted the transcript into the journal app, or asks you to distill a discussion that is already in the journal, pass its id as thread_id and send only the digest (read it first with get_record if it is not this conversation).',
         `Also send a digest: a short summary, at most ${MAX_NOTES} notes, and any open questions.`,
         "Ideas John stated himself go in with originator \"john\", in his own words. Ideas you contributed go in with originator \"claude\"; they stay proposed until John accepts them in the journal.",
@@ -138,7 +139,12 @@ export function buildServer(store: Store): McpServer {
         thread = {
           ...existing,
           summary: input.summary || existing.summary,
-          messages: [...(existing.messages ?? []), ...input.messages],
+          messages: [
+            ...(existing.messages ?? []),
+            ...input.messages.filter(
+              (m) => !(existing.messages ?? []).some((e) => e.role === m.role && e.text.trim() === m.text.trim()),
+            ),
+          ],
           updated: now,
         };
         if (input.original_date) {
@@ -254,7 +260,7 @@ export function buildServer(store: Store): McpServer {
     {
       title: 'Add more of a transcript',
       description:
-        'Add the next part of a long transcript to a discussion already saved with save_thread. Call it as many times as needed, in order, until the whole discussion is in the journal.',
+        'Add more messages to a discussion already in the journal: the next part of a long transcript, or the new part of a conversation that continued after it was saved. Send them in order, unshortened. Call it as many times as needed.',
       inputSchema: {
         thread_id: z.string().describe('The id save_thread returned'),
         messages: z.array(z.object({ role: originator, text: z.string() })).min(1),
@@ -264,13 +270,20 @@ export function buildServer(store: Store): McpServer {
       const j = await store.all();
       const existing = j.records.find((r) => r.id === thread_id.trim() && r.type === 'thread') as Thread | undefined;
       if (!existing) return text(`No discussion in the journal has the id "${thread_id}". Nothing was added.`);
+      // Sending something the journal already holds must not duplicate it.
+      const have = new Set((existing.messages ?? []).map((m) => `${m.role}\u0000${m.text.trim()}`));
+      const fresh = messages.filter((m) => !have.has(`${m.role}\u0000${m.text.trim()}`));
+      const skipped = messages.length - fresh.length;
       const next: Thread = {
         ...existing,
-        messages: [...(existing.messages ?? []), ...messages],
+        messages: [...(existing.messages ?? []), ...fresh],
         updated: new Date().toISOString(),
       };
-      await store.write([next], []);
-      return text(`Added ${messages.length} messages to "${next.title}". It now holds ${next.messages.length}.`);
+      if (fresh.length) await store.write([next], []);
+      return text(
+        `Added ${fresh.length} messages to "${next.title}". It now holds ${next.messages.length}.` +
+          (skipped ? ` Skipped ${skipped} that were already there.` : ''),
+      );
     },
   );
 

@@ -66,18 +66,19 @@ export function Detail({ journal, rec, onOpen, onFocus }: Props) {
       {isThread(rec) && (
         <section>
           <h3>Transcript</h3>
-          {rec.messages.map((m, i) => (
-            <div key={i} className={`message ${m.role}`}>
-              <strong>{originatorName(m.role)}</strong>
-              <p>{m.text}</p>
-            </div>
-          ))}
           {rec.rawText && (
             <div className="message">
               <p className="meta">Pasted in whole; speakers are not marked.</p>
               <p>{rec.rawText}</p>
             </div>
           )}
+          {rec.rawText && rec.messages.length > 0 && <p className="meta">Continued after the pasted part:</p>}
+          {rec.messages.map((m, i) => (
+            <div key={i} className={`message ${m.role}`}>
+              <strong>{originatorName(m.role)}</strong>
+              <p>{m.text}</p>
+            </div>
+          ))}
         </section>
       )}
     </article>
