@@ -20,7 +20,7 @@ import {
   type Journal,
   type Neighbour,
 } from './journal';
-import { LINK_TYPES, type LinkType, type Note, type Question, type Rec, type Source } from './model';
+import { LINK_TYPES, type LinkType, type Note, type Question, type Rec, type Source, type Thread } from './model';
 
 interface Props {
   journal: Journal;
@@ -51,15 +51,7 @@ export function Detail({ journal, rec, onOpen, onFocus }: Props) {
       {isNote(rec) && <NoteBody key={rec.id} note={rec} onFocus={onFocus} />}
       {isQuestion(rec) && <QuestionBody question={rec} />}
       {isSource(rec) && <SourceBody journal={journal} source={rec} />}
-      {isThread(rec) && (
-        <>
-          <h2>{rec.title}</h2>
-          <p className="meta">
-            {rec.date} · held in {rec.where === 'claude' ? 'Claude' : 'the journal'} · {rec.messages.length} messages
-          </p>
-          <p>{rec.summary}</p>
-        </>
-      )}
+      {isThread(rec) && <ThreadBody key={rec.id} thread={rec} distilled={notes.length + questions.length > 0} />}
 
       <Section title="Sits under" items={parents} onOpen={onOpen} />
       <Section title="Sub-topics" items={subTopics} onOpen={onOpen} />
@@ -80,6 +72,12 @@ export function Detail({ journal, rec, onOpen, onFocus }: Props) {
               <p>{m.text}</p>
             </div>
           ))}
+          {rec.rawText && (
+            <div className="message">
+              <p className="meta">Pasted in whole; speakers are not marked.</p>
+              <p>{rec.rawText}</p>
+            </div>
+          )}
         </section>
       )}
     </article>
@@ -104,6 +102,60 @@ function Section({ title, items, onOpen, showType }: { title: string; items: Nei
         ))}
       </ul>
     </section>
+  );
+}
+
+function ThreadBody({ thread, distilled }: { thread: Thread; distilled: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(thread.title);
+  const [date, setDate] = useState(thread.date);
+  const size = thread.messages.length
+    ? `${thread.messages.length} messages`
+    : thread.rawText
+      ? `${Math.max(1, Math.round(thread.rawText.length / 1000))}k characters pasted`
+      : 'no transcript yet';
+  return (
+    <>
+      {editing ? (
+        <form
+          className="stack"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await patch(thread, { title: title.trim() || thread.title, date: date || thread.date, dateConfirmed: true });
+            setEditing(false);
+          }}
+        >
+          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Title" />
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date of the discussion" />
+          <div className="row">
+            <button type="submit">Save</button>
+            <button type="button" className="quiet" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <h2>{thread.title}</h2>
+          <p className="meta">
+            {thread.date}
+            {thread.dateConfirmed === false && <span className="warn"> (date not confirmed)</span>} · held in{' '}
+            {thread.where === 'claude' ? 'Claude' : 'the journal'} · {size}
+          </p>
+          {thread.summary && <p>{thread.summary}</p>}
+          <div className="row">
+            <button className="quiet" onClick={() => setEditing(true)}>
+              Edit title and date
+            </button>
+          </div>
+        </>
+      )}
+      {!distilled && (
+        <p className="comment">
+          Not distilled yet. In Claude, with the journal connected, say: “Distill discussion {thread.id} in my journal.”
+        </p>
+      )}
+    </>
   );
 }
 

@@ -76,6 +76,23 @@ export async function addQuestion(text: string, under?: string) {
   return q;
 }
 
+// A discussion pasted in whole. The text is kept exactly as pasted.
+export async function addThread(title: string, date: string, rawText: string) {
+  const t: Thread = {
+    ...spine('thread'),
+    type: 'thread',
+    title,
+    date,
+    dateConfirmed: true,
+    where: 'claude',
+    summary: '',
+    messages: [],
+    rawText,
+  };
+  await backend.save([t], []);
+  return t;
+}
+
 // Editing keeps every earlier version.
 export async function editNote(note: Note, title: string, text: string) {
   if (title === note.title && text === note.text) return;

@@ -136,8 +136,9 @@ export function renderRecord(j: Journal, id: string): string | undefined {
     x ? `[${x.id}] ${(x as { title?: string; text?: string }).title ?? firstSentence((x as { text?: string }).text ?? '')}` : fallback;
   const out: string[] = [];
   if (isThread(r)) {
-    out.push(`# Discussion: ${r.title}`, `id: ${r.id} | date: ${r.date} | where: ${r.where}`, '', '## Summary', r.summary, '', '## Transcript');
+    out.push(`# Discussion: ${r.title}`, `id: ${r.id} | date: ${r.date}${r.dateConfirmed === false ? ' (not confirmed)' : ''} | where: ${r.where}`, '', '## Summary', r.summary, '', '## Transcript');
     for (const m of r.messages) out.push('', `**${m.role === 'john' ? 'John' : 'Claude'}:**`, m.text);
+    if (r.rawText) out.push('', '(Pasted by John as one block; speakers are not marked.)', '', r.rawText);
   } else if (isNote(r)) {
     out.push(`# ${r.isTopic ? 'Topic' : 'Note'}: ${r.title}`);
     out.push(`id: ${r.id} | originator: ${r.originator} | status: ${r.review}${r.unverifiedSource ? ' | rests on an unverified account of a source' : ''}`);

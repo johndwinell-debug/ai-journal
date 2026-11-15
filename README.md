@@ -72,14 +72,19 @@ from the wording below.
     - Authentication: no sign-in
     - Request header: `Authorization` with the value `Bearer <your key>`
 
-    If your plan offers no request-header option, append `?key=<your key>` to
-    the URL instead.
+    If the connector will not connect with the header, leave the headers
+    empty and append `?key=<your key>` to the URL instead. Treat that whole
+    address as private.
 
 ## Using it
 
 In any Claude conversation, with the connector enabled:
 
-- "Save this to my journal." Add "from last March" for an older discussion.
+- "Save this to my journal." State the date for an older discussion
+  ("from March 3rd"); without one it is dated today and marked unconfirmed.
+- For a long discussion Claude sends the transcript in parts. If that fails,
+  open Discussions in the app, choose "Add a discussion by pasting", paste the
+  whole conversation, then tell Claude: "Distill discussion <id> in my journal."
 - "Show me my journal map."
 - "Pull my briefing on cultural evolution."
 

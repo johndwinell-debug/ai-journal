@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { backend, type Ownership, type User } from './data';
 import { Detail } from './Detail';
-import { isThread, isTopic, label, reviewOf, type Journal } from './journal';
+import { addThread, isThread, isTopic, label, reviewOf, type Journal } from './journal';
 import { MapView } from './MapView';
 import type { Link, Rec } from './model';
 import { pending, Review } from './Review';
@@ -61,6 +61,72 @@ export function App() {
     );
   }
   return <JournalApp user={user} />;
+}
+
+// For discussions too long for Claude to send across: paste the whole text here,
+// then ask Claude to distill it.
+function NewDiscussion({ onCreated }: { onCreated(id: string): void }) {
+  const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+  const [show, setShow] = useState(false);
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(today);
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!show) {
+    return (
+      <div className="row">
+        <button onClick={() => setShow(true)}>Add a discussion by pasting</button>
+      </div>
+    );
+  }
+  const tooBig = body.length > 900_000;
+  return (
+    <form
+      className="card stack"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!title.trim() || !body.trim() || tooBig) return;
+        setBusy(true);
+        setError('');
+        try {
+          const t = await addThread(title.trim(), date || today, body);
+          setTitle('');
+          setBody('');
+          setShow(false);
+          onCreated(t.id);
+        } catch (err) {
+          setError(String((err as Error).message ?? err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <h3>Add a discussion by pasting</h3>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title, as it appears in Claude" autoFocus />
+      <label className="row">
+        Date of the discussion
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: 'auto' }} />
+      </label>
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={10}
+        placeholder="Select the whole conversation in Claude, copy it, and paste it here."
+      />
+      {tooBig && <p className="warn">This is too long to store as one discussion. Split it into two.</p>}
+      {error && <p className="warn">{error}</p>}
+      <div className="row">
+        <button type="submit" disabled={busy || tooBig}>
+          {busy ? 'Saving…' : 'Save to journal'}
+        </button>
+        <button type="button" className="quiet" onClick={() => setShow(false)}>
+          Cancel
+        </button>
+        <span className="meta">The text is kept exactly as pasted.</span>
+      </div>
+    </form>
+  );
 }
 
 function Splash({ children }: { children: React.ReactNode }) {
@@ -206,22 +272,30 @@ function JournalApp({ user }: { user: User }) {
               </div>
             ))}
           {tab === 'review' && <Review journal={journal} onOpen={open} />}
-          {tab === 'discussions' &&
-            (threads.length === 0 ? (
-              <p className="empty">No discussions saved yet. In Claude, say “save this to my journal”.</p>
-            ) : (
-              <ul className="threads">
-                {threads.map((t) => (
-                  <li key={t.id}>
-                    <button className="linkish" onClick={() => open(t.id)}>
-                      {t.title}
-                    </button>
-                    <span className="meta"> · {t.date}</span>
-                    <p className="meta">{t.summary}</p>
-                  </li>
-                ))}
-              </ul>
-            ))}
+          {tab === 'discussions' && (
+            <>
+              <NewDiscussion onCreated={open} />
+              {threads.length === 0 ? (
+                <p className="empty">No discussions saved yet. In Claude, say “save this to my journal”, or paste one in above.</p>
+              ) : (
+                <ul className="threads">
+                  {threads.map((t) => (
+                    <li key={t.id}>
+                      <button className="linkish" onClick={() => open(t.id)}>
+                        {t.title}
+                      </button>
+                      <span className="meta">
+                        {' '}
+                        · {t.date}
+                        {t.dateConfirmed === false && ' (date not confirmed)'}
+                      </span>
+                      {t.summary && <p className="meta">{t.summary}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
         </main>
         <aside>
           {selectedRec ? (

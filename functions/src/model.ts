@@ -78,8 +78,10 @@ export interface Thread extends Spine {
   title: string;
   date: string; // when the discussion happened, YYYY-MM-DD
   where: 'claude' | 'app';
+  dateConfirmed?: boolean; // false when the date was not stated and defaulted to the day it was saved
   summary: string;
-  messages: Message[]; // the transcript, kept permanently
+  messages: Message[]; // the transcript, turn by turn, kept permanently
+  rawText?: string; // a transcript pasted in whole, not split into turns
 }
 
 export type Rec = Note | Question | Source | Thread | (Spine & Record<string, unknown>);

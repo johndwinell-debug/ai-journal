@@ -49,7 +49,7 @@ async function main() {
   };
 
   const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-  check('lists four tools', tools.join() === 'get_briefing,get_map,get_record,save_thread', tools.join());
+  check('lists five tools', tools.join() === 'append_messages,get_briefing,get_map,get_record,save_thread', tools.join());
 
   const map = await out('get_map', {});
   check('map nests sub-topics', /- \[note-evo\].*\n  - \[note-cult\]/.test(map.text));
@@ -97,6 +97,28 @@ async function main() {
   check('briefing shows accepted note once link is confirmed', /Language is culture/.test(after.text) && /Open questions/.test(after.text));
   const cult = await out('get_briefing', { topic: 'note-cult' });
   check("briefing hides Claude's proposed note", !/ratchet/.test(cult.text) && /Sits under/.test(cult.text));
+
+  const more = await out('append_messages', { thread_id: thread.id, messages: [{ role: 'john', text: 'A later point.' }] });
+  check('append_messages extends the transcript', /now holds 3/.test(more.text));
+
+  const undated = await out('save_thread', { title: 'No date', summary: 's', messages: [{ role: 'john', text: 'hello' }] });
+  const undatedRec = (await store.all()).records.find((r) => (r as { title?: string }).title === 'No date') as { dateConfirmed?: boolean };
+  check('a save with no date is marked unconfirmed', undatedRec.dateConfirmed === false && /unconfirmed/.test(undated.text));
+
+  const empty = await out('save_thread', { title: 'Empty', summary: 's' });
+  check('a save with no transcript and no thread id is refused', /Nothing was saved/.test(empty.text));
+
+  // A discussion John pasted into the app, distilled afterwards.
+  await store.write([{ id: 'thread-pasted', type: 'thread', created: now, updated: now, origin: 'app', title: 'My pasted title', date: '2026-09-01', dateConfirmed: true, where: 'claude', summary: '', messages: [], rawText: 'John: a long pasted discussion' } as never], []);
+  const pasted = await out('get_record', { id: 'thread-pasted' });
+  check('a pasted transcript can be read back', /a long pasted discussion/.test(pasted.text));
+  const attach = await out('save_thread', { title: 'Ignored title', thread_id: 'thread-pasted', summary: 'What it covered.', notes: [{ title: 'Pasted idea', text: 'An idea.', originator: 'claude', topics: ['Language'] }] });
+  const after2 = await store.all();
+  const kept = after2.records.find((r) => r.id === 'thread-pasted') as { title: string; summary: string; rawText: string; date: string };
+  check('a digest attaches to a pasted discussion and keeps its title and text', /Attached the digest/.test(attach.text) && kept.title === 'My pasted title' && kept.summary === 'What it covered.' && !!kept.rawText && kept.date === '2026-09-01');
+  check('the attached note points at the pasted discussion', after2.links.some((l) => l.to === 'thread-pasted' && l.type === 'prompted by'));
+  const bad = await out('save_thread', { title: 'x', thread_id: 'thread-nope', summary: 's' });
+  check('an unknown thread id saves nothing', /Nothing was saved/.test(bad.text));
 
   const rec = await out('get_record', { id: thread.id });
   check('drill-down returns the transcript', /\*\*John:\*\*\nLanguage is culture and knowledge\./.test(rec.text));
