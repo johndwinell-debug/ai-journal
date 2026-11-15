@@ -63,7 +63,8 @@ from the wording below.
        firebase deploy
 
    The output lists a Hosting URL (the app) and a Function URL for `connector`.
-9. **Claim the journal.** Open the Hosting URL, sign in with Google and choose
+9. **Claim the journal.** Open the app at `https://<project-id>.firebaseapp.com`
+   (the `web.app` address forwards there, so sign-in works on phones), sign in with Google and choose
    "Claim this journal". From then on only that account can read or write it.
    Then choose "Add the starting topics".
 10. **Add the connector to Claude.** On the web or desktop app, add a custom

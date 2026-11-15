@@ -2,7 +2,15 @@
 //  - Firebase, when web/.env.local holds the project's settings
 //  - a demo journal kept in this browser, when it does not
 import { initializeApp } from 'firebase/app';
-import { GoogleAuthProvider, getAuth, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  getAuth,
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -25,6 +33,7 @@ export interface Backend {
   demo: boolean;
   onUser(cb: (u: User | null) => void): () => void;
   signIn(): Promise<void>;
+  signInError(): Promise<string>; // what went wrong with a full-page sign-in, if anything
   signOut(): Promise<void>;
   ownership(u: User): Promise<Ownership>;
   claim(u: User): Promise<void>;
@@ -35,7 +44,23 @@ export interface Backend {
 
 const env = import.meta.env;
 
+// Sign-in is only reliable on phones when the app and Firebase's sign-in pages
+// share one address. Firebase serves the app at two (…web.app and
+// …firebaseapp.com); sign-in lives on the second, so the app always runs there.
+function useSignInAddress() {
+  const home = env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined;
+  if (home && location.hostname !== home && location.hostname.endsWith('.web.app')) {
+    location.replace(`https://${home}${location.pathname}${location.search}${location.hash}`);
+  }
+}
+
+// Phones and tablets handle a full-page sign-in better than a pop-up window.
+function prefersRedirect(): boolean {
+  return window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(display-mode: standalone)').matches;
+}
+
 function firebaseBackend(): Backend {
+  useSignInAddress();
   const app = initializeApp({
     apiKey: env.VITE_FIREBASE_API_KEY,
     authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -50,7 +75,27 @@ function firebaseBackend(): Backend {
     onUser: (cb) =>
       onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, name: u.displayName ?? u.email ?? 'Signed in' } : null)),
     signIn: async () => {
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      const provider = new GoogleAuthProvider();
+      if (prefersRedirect()) return signInWithRedirect(auth, provider);
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (e) {
+        const code = (e as { code?: string }).code ?? '';
+        // A blocked pop-up falls back to the full-page sign-in.
+        if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+          return signInWithRedirect(auth, provider);
+        }
+        if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+        throw e;
+      }
+    },
+    signInError: async () => {
+      try {
+        await getRedirectResult(auth);
+        return '';
+      } catch (e) {
+        return String((e as Error).message ?? e);
+      }
     },
     signOut: () => signOut(auth),
     ownership: async (u) => {
@@ -126,6 +171,7 @@ function demoBackend(): Backend {
       return () => {};
     },
     signIn: async () => {},
+    signInError: async () => '',
     signOut: async () => {},
     ownership: async () => 'mine',
     claim: async () => {},

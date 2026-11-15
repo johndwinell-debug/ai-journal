@@ -25,6 +25,9 @@ export function App() {
 
   useEffect(() => backend.onUser(setUser), []);
   useEffect(() => {
+    void backend.signInError().then((message) => message && setError(message));
+  }, []);
+  useEffect(() => {
     setOwnership(null);
     if (user) backend.ownership(user).then(setOwnership, (e) => setError(String(e.message ?? e)));
   }, [user]);
