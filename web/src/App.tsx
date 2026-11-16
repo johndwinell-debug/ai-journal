@@ -5,9 +5,10 @@ import { addThread, isThread, isTopic, label, reviewOf, type Journal } from './j
 import { MapView } from './MapView';
 import type { Link, Rec } from './model';
 import { pending, Review } from './Review';
+import { Talk, type TalkStart } from './Talk';
 import { seedData } from './seed';
 
-type Tab = 'map' | 'review' | 'discussions';
+type Tab = 'map' | 'talk' | 'review' | 'discussions';
 const TRAIL_KEY = 'ai-journal-trail';
 
 function loadTrail(): string[] {
@@ -142,6 +143,7 @@ function JournalApp({ user }: { user: User }) {
   const [tab, setTab] = useState<Tab>('map');
   const [selected, setSelected] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
+  const [talk, setTalk] = useState<TalkStart>({});
   const [trail, setTrail] = useState<string[]>(loadTrail);
   const [showConfirmed, setShowConfirmed] = useState(true);
   const [showSuggested, setShowSuggested] = useState(false);
@@ -176,6 +178,10 @@ function JournalApp({ user }: { user: User }) {
     setTab('map');
     if (id) open(id);
   };
+  const startTalk = (next: TalkStart) => {
+    setTalk(next);
+    setTab('talk');
+  };
   const stepBack = (index: number) => {
     const id = trail[index];
     setTrail(trail.slice(0, index + 1));
@@ -197,6 +203,9 @@ function JournalApp({ user }: { user: User }) {
         <nav>
           <button className={tab === 'map' ? 'on' : ''} onClick={() => setTab('map')}>
             Map
+          </button>
+          <button className={tab === 'talk' ? 'on' : ''} onClick={() => setTab('talk')}>
+            Talk
           </button>
           <button className={tab === 'review' ? 'on' : ''} onClick={() => setTab('review')}>
             Review{waiting > 0 && <span className="count">{waiting}</span>}
@@ -274,6 +283,7 @@ function JournalApp({ user }: { user: User }) {
                 </button>
               </div>
             ))}
+          {tab === 'talk' && <Talk journal={journal} start={talk} onStart={setTalk} onOpen={open} onReview={() => setTab('review')} />}
           {tab === 'review' && <Review journal={journal} onOpen={open} />}
           {tab === 'discussions' && (
             <>
@@ -302,7 +312,7 @@ function JournalApp({ user }: { user: User }) {
         </main>
         <aside>
           {selectedRec ? (
-            <Detail journal={journal} rec={selectedRec} onOpen={open} onFocus={drill} />
+            <Detail journal={journal} rec={selectedRec} onOpen={open} onFocus={drill} onTalk={startTalk} />
           ) : (
             <p className="empty">Select something to see its detail.</p>
           )}

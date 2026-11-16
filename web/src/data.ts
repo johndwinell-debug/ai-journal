@@ -40,6 +40,9 @@ export interface Backend {
   subscribe(cb: (records: Rec[], links: Link[]) => void, onError: (e: Error) => void): () => void;
   save(records: Rec[], links: Link[]): Promise<void>;
   removeLinks(ids: string[]): Promise<void>;
+  // Where conversations are sent, and the proof of sign-in that goes with them.
+  assistantUrl: string | null;
+  idToken(): Promise<string | null>;
 }
 
 const env = import.meta.env;
@@ -72,6 +75,10 @@ function firebaseBackend(): Backend {
   const owner = doc(db, 'config', 'owner');
   return {
     demo: false,
+    assistantUrl:
+      (env.VITE_ASSISTANT_URL as string | undefined) ||
+      `https://us-east1-${env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net/assistant`,
+    idToken: async () => (auth.currentUser ? auth.currentUser.getIdToken() : null),
     onUser: (cb) =>
       onAuthStateChanged(auth, (u) => cb(u ? { uid: u.uid, name: u.displayName ?? u.email ?? 'Signed in' } : null)),
     signIn: async () => {
@@ -166,6 +173,9 @@ function demoBackend(): Backend {
   const user: User = { uid: 'demo', name: 'Demo' };
   return {
     demo: true,
+    // The demo has no assistant unless one is run locally for development.
+    assistantUrl: (env.VITE_ASSISTANT_URL as string | undefined) || null,
+    idToken: async () => 'demo',
     onUser: (cb) => {
       cb(user);
       return () => {};

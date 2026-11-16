@@ -7,6 +7,33 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { handleConnector } from './http.js';
 import type { Link, Note } from './model.js';
 import { MemoryStore } from './store.js';
+import { handleAssistant } from './assistant.js';
+import { runChat, runDistill, STANDING_INSTRUCTIONS_ID, toApiMessages, type Llm, type LlmMessage } from './talk.js';
+
+// A stand-in for the Claude API: plays back scripted replies and records what it was asked.
+function scripted(replies: LlmMessage[]) {
+  const asked: Array<Record<string, unknown>> = [];
+  const llm: Llm = {
+    stream(params) {
+      asked.push(JSON.parse(JSON.stringify(params)));
+      const reply = replies.shift();
+      if (!reply) throw new Error('script ran out');
+      const listeners: Array<(d: string) => void> = [];
+      return {
+        on(_event, listener) {
+          listeners.push(listener);
+          return this;
+        },
+        async finalMessage() {
+          for (const b of reply.content) if (b.type === 'text') for (const l of listeners) l(String(b.text));
+          return reply;
+        },
+      };
+    },
+  };
+  return { llm, asked };
+}
+
 
 const KEY = 'test-key';
 const now = new Date().toISOString();
@@ -136,6 +163,70 @@ async function main() {
 
   await client.close();
   listener.close();
+
+  // ---- Conversations inside the journal
+  await store.write([{ ...topic(STANDING_INSTRUCTIONS_ID, 'Standing instructions', 'I love physics.'), isTopic: false }], []);
+  const events: Array<{ type: string; text?: string; threadId?: string }> = [];
+  const chat1 = scripted([
+    { stop_reason: 'tool_use', content: [{ type: 'text', text: 'Let me check.' }, { type: 'tool_use', id: 'tu1', name: 'get_briefing', input: { topic: 'Language' } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'server_tool_use', id: 's1', name: 'web_search', input: { query: 'ratchet effect' } }, { type: 'text', text: 'It bears on your note.', citations: [{ type: 'web_search_result_location', url: 'https://example.org/a', title: 'A [paper]' }] }] },
+  ]);
+  const made = await runChat({ store, llm: chat1.llm, model: 'm', input: { message: 'How does language ratchet culture?\nMore detail.', aboutId: 'note-lang', webSearch: true }, emit: (e) => events.push(e) });
+  const sys1 = String(chat1.asked[0].system);
+  check('a conversation from a topic sends its briefing and standing instructions', /# Briefing: Language/.test(sys1) && /I love physics\./.test(sys1) && /Web search is on/.test(sys1));
+  check('web search is offered only when switched on', (chat1.asked[0].tools as Array<{ name: string }>).some((t) => t.name === 'web_search'));
+  const toolTurn = (chat1.asked[1].messages as Array<{ role: string; content: Array<{ type: string; content?: string }> }>).at(-1)!;
+  check('Claude can drill into the journal mid-conversation', toolTurn.role === 'user' && /# Briefing: Language/.test(toolTurn.content[0].content ?? ''));
+  check('the reply is stored with its sources', made.where === 'app' && made.messages.length === 2 && made.messages[0].role === 'john' && /Let me check\.\n\nIt bears on your note\.\n\nSources:\n- \[A paper\]\(https:\/\/example\.org\/a\)/.test(made.messages[1].text) && !!made.messages[1].at);
+  check('the title comes from the first line', made.title === 'How does language ratchet culture?');
+  check('progress is streamed', events.some((e) => e.type === 'status' && /briefing on Language/.test(e.text ?? '')) && events.some((e) => e.type === 'status' && /Searched the web for "ratchet effect"/.test(e.text ?? '')) && events.at(-1)?.type === 'done');
+  check('starting from a topic links the discussion to it', (await store.all()).links.some((l) => l.from === made.id && l.to === 'note-lang' && l.status === 'confirmed' && l.origin === 'manual'));
+
+  const chat2 = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Continuing.' }] }]);
+  const cont2 = await runChat({ store, llm: chat2.llm, model: 'm', input: { message: 'And then?', threadId: made.id }, emit: () => {} });
+  const hist = chat2.asked[0].messages as Array<{ role: string; content: string }>;
+  check('continuing sends the earlier turns and keeps the topic', cont2.id === made.id && cont2.messages.length === 4 && hist.length === 3 && hist[1].role === 'assistant' && /# Briefing: Language/.test(String(chat2.asked[0].system)) && /Web search is off/.test(String(chat2.asked[0].system)) && !(chat2.asked[0].tools as Array<{ name: string }>).some((t) => t.name === 'web_search'));
+
+  const chat3 = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Picking up.' }] }]);
+  await runChat({ store, llm: chat3.llm, model: 'm', input: { message: 'Continue this.', threadId: 'thread-pasted' }, emit: () => {} });
+  check('a pasted discussion can be continued with its text as context', /a long pasted discussion/.test(String(chat3.asked[0].system)));
+  const shaped = toApiMessages([{ role: 'claude', text: 'a' }, { role: 'claude', text: 'b' }, { role: 'john', text: 'c' }], 'd');
+  check('turns sent to Claude always alternate, starting with John', shaped.map((m) => m.role).join() === 'user,assistant,user' && shaped[2].content === 'c\n\nd');
+
+  const blank = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Hello.' }] }]);
+  await runChat({ store, llm: blank.llm, model: 'm', input: { message: 'Something new' }, emit: () => {} });
+  check('a conversation from nothing starts with the map', /# Journal map/.test(String(blank.asked[0].system)));
+
+  const digestReply = (notes: unknown[]): LlmMessage => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'd1', name: 'record_digest', input: { summary: 'Language as ratchet.', notes, questions: [{ text: 'Is it directional?', originator: 'claude', topics: ['Language'] }], sources: [{ kind: 'book', title: 'The Secret of Our Success' }] } }] });
+  const d1 = scripted([digestReply([{ title: 'Mine', text: 'My idea.', originator: 'john', topics: ['Language'] }, { title: 'Yours', text: 'Its idea.', originator: 'claude', topics: ['Nope'] }])]);
+  const out1 = await runDistill({ store, llm: d1.llm, model: 'm', threadId: made.id });
+  const afterD = await store.all();
+  const mine = afterD.records.find((r) => (r as { title?: string }).title === 'Mine') as Note;
+  const yours = afterD.records.find((r) => (r as { title?: string }).title === 'Yours') as Note;
+  check('distilling follows the same rules as saving from Claude', out1.notes === 2 && out1.questions === 1 && out1.sources === 0 && out1.waiting === 2 && mine.review === 'accepted' && yours.review === 'proposed' && out1.unmatched.join() === 'Nope');
+  check('distilling updates the summary and forces the digest tool', (afterD.records.find((r) => r.id === made.id) as { summary: string }).summary === 'Language as ratchet.' && (d1.asked[0].tool_choice as { name: string }).name === 'record_digest');
+  const d2 = scripted([digestReply([])]);
+  await runDistill({ store, llm: d2.llm, model: 'm', threadId: made.id });
+  check('a second distillation is told what was already captured', /Do not repeat them/.test(String(d2.asked[0].system)) && /Mine: My idea\./.test(String(d2.asked[0].system)));
+  const d3 = scripted([digestReply(Array.from({ length: 7 }, (_, i) => ({ title: `n${i}`, text: 't', originator: 'claude' })))]);
+  const tooManyD = await runDistill({ store, llm: d3.llm, model: 'm', threadId: made.id }).then(() => 'ok', () => 'refused');
+  check('distilling also refuses more than six notes', tooManyD === 'refused');
+
+  // ---- The web address the app calls
+  const api = express();
+  api.use(express.json());
+  const apiLlm = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Hi John.' }] }]);
+  api.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store, llm: apiLlm.llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good' }));
+  const apiListener = api.listen(0);
+  const base = `http://127.0.0.1:${(apiListener.address() as AddressInfo).port}/assistant`;
+  const post = (path: string, token: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  check('only the owner can start a conversation', (await post('/chat', 'bad', { message: 'hi' })).status === 401);
+  const streamed = await post('/chat', 'good', { message: 'hi' });
+  const sse = await streamed.text();
+  check('replies arrive as a stream of events', streamed.headers.get('content-type')?.startsWith('text/event-stream') === true && /data: \{"type":"text","text":"Hi John\."\}/.test(sse) && /"type":"done","threadId":"thread-/.test(sse));
+  const failed = await (await post('/chat', 'good', { message: 'again' })).text();
+  check('a failure is reported in the stream', /"type":"error"/.test(failed));
+  apiListener.close();
 }
 
 main().catch((e) => {

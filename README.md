@@ -10,8 +10,11 @@ This is the first thin slice. It contains:
   journal and read briefings from it.
 - **`firestore.rules`** Keeps the journal private to one account.
 
-Not in this slice yet: conversations with Claude inside the app, and the other
-sources (Audible, Flipboard, podcasts, YouTube, browsers).
+- **`functions/` (assistant)** Conversations with Claude inside the journal,
+  through the Claude API, with optional web search and distilling.
+
+Not built yet: the other sources (Audible, Flipboard, podcasts, YouTube,
+browsers).
 
 ## Try it without any setup
 
@@ -77,7 +80,30 @@ from the wording below.
     empty and append `?key=<your key>` to the URL instead. Treat that whole
     address as private.
 
-## Using it
+## Conversations inside the journal
+
+These use the Claude API, which is billed separately from a Claude
+subscription. Set a monthly spending limit on the API account.
+
+1. Create an API key in the Claude Console (Anthropic's developer console).
+2. Store it, then deploy:
+
+       firebase functions:secrets:set ANTHROPIC_API_KEY
+       firebase deploy
+
+   The deploy fails if the secret has not been set.
+3. In the app, open **Talk**. Start from nothing, from a topic ("Talk about
+   this"), or from a saved discussion ("Continue this discussion").
+4. **Standing instructions** opens the note sent to Claude with every
+   conversation. Edit it freely; earlier versions are kept.
+5. **Distill** captures notes, questions and sources from the conversation,
+   under the same rules as a discussion saved from Claude.
+
+Models are set in `functions/src/index.ts` (`CHAT_MODEL`, `DISTILL_MODEL`) and
+can be overridden in a `functions/.env` file, for example
+`CHAT_MODEL=claude-sonnet-5-5`.
+
+## Using the connector
 
 In any Claude conversation, with the connector enabled:
 
@@ -100,8 +126,10 @@ wait under Review, along with suggested links to topics.
 | Rule | Where |
 | --- | --- |
 | A note's originator never changes | `web/src/journal.ts` (`accept`), `functions/src/mcp.ts` |
-| Claude's notes and links stay proposed until accepted | `functions/src/mcp.ts` (`save_thread`) |
-| At most six notes per saved discussion | `functions/src/mcp.ts` (`MAX_NOTES`) |
+| Claude's notes and links stay proposed until accepted | `functions/src/digest.ts` (`applyDigest`) |
+| At most six notes per saved or distilled discussion | `functions/src/digest.ts` (`MAX_NOTES`) |
+| Conversations never write notes; only distilling does | `functions/src/talk.ts` |
+| Only the signed-in owner can use the assistant | `functions/src/index.ts` (`isOwner`) |
 | Editing a note keeps every earlier version | `web/src/journal.ts` (`editNote`) |
 | A confirmed suggestion moves to the manual layer | `web/src/journal.ts` (`confirmLink`) |
 | A book's reading status places it under Books | `web/src/journal.ts` (`shelve`) |
@@ -115,3 +143,6 @@ wait under Review, along with suggested links to topics.
 - The connector reads the whole journal on each call. Fine at personal scale.
 - The mind map is readable on a desktop or iPad. On a phone it is small.
 - Trails are remembered per browser, not yet saved to the journal.
+- A conversation in the journal sends its whole history to Claude each turn,
+  so very long ones cost more per message and eventually hit a size limit.
+  Distill and start a fresh conversation from the topic.

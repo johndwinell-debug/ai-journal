@@ -71,13 +71,14 @@ export interface Source extends Spine {
 export interface Message {
   role: Originator;
   text: string;
+  at?: string; // when it was said, for conversations held in the journal
 }
 
 export interface Thread extends Spine {
   type: 'thread';
   title: string;
   date: string; // when the discussion happened, YYYY-MM-DD
-  where: 'claude' | 'app';
+  where: 'claude' | 'app'; // held in the Claude app, or inside the journal
   dateConfirmed?: boolean; // false when the date was not stated and defaulted to the day it was saved
   summary: string;
   messages: Message[]; // the transcript, turn by turn, kept permanently

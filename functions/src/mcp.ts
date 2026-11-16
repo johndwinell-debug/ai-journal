@@ -1,10 +1,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { findTopic, renderBriefing, renderMap, renderRecord, topics } from './briefing.js';
-import { newId, type Link, type Note, type Question, type Rec, type Source, type Thread } from './model.js';
+import { applyDigest, digestShape, MAX_NOTES } from './digest.js';
+import { newId, type Link, type Rec, type Thread } from './model.js';
 import type { Store } from './store.js';
 
-const MAX_NOTES = 6;
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const originator = z.enum(['john', 'claude']);
 
@@ -91,34 +91,7 @@ export function buildServer(store: Store): McpServer {
           .array(z.object({ role: originator, text: z.string() }))
           .default([])
           .describe('The transcript in order. role is "john" for the user and "claude" for the assistant. Required unless thread_id is given'),
-        notes: z
-          .array(
-            z.object({
-              title: z.string().describe('A few words'),
-              text: z.string().describe('One idea, stated plainly'),
-              originator,
-              topics: z.array(z.string()).default([]).describe('Titles or ids of related journal topics'),
-              rests_on_source_account: z
-                .boolean()
-                .default(false)
-                .describe("True if this note relies on Claude's recollection of a book or paper that was not checked"),
-            }),
-          )
-          .max(MAX_NOTES)
-          .default([]),
-        questions: z
-          .array(z.object({ text: z.string(), originator, topics: z.array(z.string()).default([]) }))
-          .default([]),
-        sources: z
-          .array(
-            z.object({
-              kind: z.enum(['book', 'article', 'episode', 'video', 'other']),
-              title: z.string(),
-              author: z.string().optional(),
-              reading_status: z.enum(['mentioned', 'queued', 'read']).default('mentioned'),
-            }),
-          )
-          .default([]),
+        ...digestShape,
       },
     },
     async (input) => {
@@ -127,9 +100,6 @@ export function buildServer(store: Store): McpServer {
       const spine = (type: Rec['type']) => ({ id: newId(type), type, created: now, updated: now, origin: 'claude-connector' });
       const records: Rec[] = [];
       const links: Link[] = [];
-      const unmatched = new Set<string>();
-      const link = (from: string, to: string, type: Link['type'], status: Link['status']) =>
-        links.push({ id: newId('link'), from, to, type, origin: 'generated', status, created: now });
 
       let thread: Thread;
       if (input.thread_id) {
@@ -168,69 +138,10 @@ export function buildServer(store: Store): McpServer {
       }
       records.push(thread);
 
-      const linkTopics = (id: string, names: string[]) => {
-        for (const name of names) {
-          const t = findTopic(j, name);
-          // Which topic an idea belongs under is a suggestion until John confirms it.
-          if (t) link(id, t.id, 'relates to', 'suggested');
-          else unmatched.add(name);
-        }
-      };
-
-      for (const n of input.notes) {
-        const note: Note = {
-          ...spine('note'),
-          type: 'note',
-          title: n.title,
-          text: n.text,
-          originator: n.originator,
-          // John's own ideas are his; Claude's wait for his review.
-          review: n.originator === 'john' ? 'accepted' : 'proposed',
-          unverifiedSource: n.rests_on_source_account || undefined,
-          isTopic: false,
-          versions: [],
-        };
-        records.push(note);
-        link(note.id, thread.id, 'prompted by', 'confirmed');
-        linkTopics(note.id, n.topics);
-      }
-
-      for (const q of input.questions) {
-        const question: Question = {
-          ...spine('question'),
-          type: 'question',
-          text: q.text,
-          originator: q.originator,
-          review: q.originator === 'john' ? 'accepted' : 'proposed',
-          state: 'active',
-        };
-        records.push(question);
-        link(question.id, thread.id, 'prompted by', 'confirmed');
-        linkTopics(question.id, q.topics);
-      }
-
-      let reused = 0;
-      for (const s of input.sources) {
-        const existing = j.records.find(
-          (r) => r.type === 'source' && String((r as Source).title).toLowerCase() === s.title.trim().toLowerCase(),
-        );
-        if (existing) {
-          reused++;
-          link(thread.id, existing.id, 'relates to', 'confirmed');
-          continue;
-        }
-        const source: Source = {
-          ...spine('source'),
-          type: 'source',
-          kind: s.kind,
-          title: s.title.trim(),
-          author: s.author,
-          readingStatus: s.reading_status,
-          review: 'proposed',
-        };
-        records.push(source);
-        link(thread.id, source.id, 'relates to', 'confirmed');
-      }
+      const filed = applyDigest(j, thread.id, input, 'claude-connector', now);
+      records.push(...filed.records);
+      links.push(...filed.links);
+      const { unmatched, reused } = filed;
 
       await store.write(records, links);
 

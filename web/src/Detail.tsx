@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Reply } from './Talk';
 import { backend } from './data';
 import {
   addNote,
@@ -17,6 +18,7 @@ import {
   patch,
   reviewOf,
   setReadingStatus,
+  STANDING_ID,
   type Journal,
   type Neighbour,
 } from './journal';
@@ -27,9 +29,10 @@ interface Props {
   rec: Rec;
   onOpen(id: string): void;
   onFocus(id: string): void;
+  onTalk(start: { threadId?: string; aboutId?: string }): void;
 }
 
-export function Detail({ journal, rec, onOpen, onFocus }: Props) {
+export function Detail({ journal, rec, onOpen, onFocus, onTalk }: Props) {
   const near = neighbours(journal, rec.id);
   const group = (test: (n: Neighbour) => boolean) => near.filter(test);
   const subTopics = group((n) => isTopic(n.rec) && n.link.type === 'parent of' && n.outward);
@@ -49,9 +52,20 @@ export function Detail({ journal, rec, onOpen, onFocus }: Props) {
       </header>
 
       {isNote(rec) && <NoteBody key={rec.id} note={rec} onFocus={onFocus} />}
+      {isNote(rec) && rec.id !== STANDING_ID && reviewOf(rec) === 'accepted' && (
+        <div className="row">
+          <button onClick={() => onTalk({ aboutId: rec.id })}>Talk about this</button>
+        </div>
+      )}
+      {rec.id === STANDING_ID && <p className="comment">Sent to Claude with every conversation held in the journal. Edit it as your thinking develops; earlier versions are kept.</p>}
       {isQuestion(rec) && <QuestionBody question={rec} />}
       {isSource(rec) && <SourceBody journal={journal} source={rec} />}
       {isThread(rec) && <ThreadBody key={rec.id} thread={rec} distilled={notes.length + questions.length > 0} />}
+      {isThread(rec) && (
+        <div className="row">
+          <button onClick={() => onTalk({ threadId: rec.id })}>Continue this discussion</button>
+        </div>
+      )}
 
       <Section title="Sits under" items={parents} onOpen={onOpen} />
       <Section title="Sub-topics" items={subTopics} onOpen={onOpen} />
@@ -76,7 +90,7 @@ export function Detail({ journal, rec, onOpen, onFocus }: Props) {
           {rec.messages.map((m, i) => (
             <div key={i} className={`message ${m.role}`}>
               <strong>{originatorName(m.role)}</strong>
-              <p>{m.text}</p>
+              {m.role === 'claude' ? <Reply text={m.text} /> : <p>{m.text}</p>}
             </div>
           ))}
         </section>
@@ -141,7 +155,7 @@ function ThreadBody({ thread, distilled }: { thread: Thread; distilled: boolean 
           <p className="meta">
             {thread.date}
             {thread.dateConfirmed === false && <span className="warn"> (date not confirmed)</span>} · held in{' '}
-            {thread.where === 'claude' ? 'Claude' : 'the journal'} · {size}
+            {thread.where === 'claude' ? 'the Claude app' : 'the journal'} · {size}
           </p>
           {thread.summary && <p>{thread.summary}</p>}
           <div className="row">
@@ -153,7 +167,7 @@ function ThreadBody({ thread, distilled }: { thread: Thread; distilled: boolean 
       )}
       {!distilled && (
         <p className="comment">
-          Not distilled yet. In Claude, with the journal connected, say: “Distill discussion {thread.id} in my journal.”
+Not distilled yet. Choose “Continue this discussion”, then Distill. Or in Claude, with the journal connected, say: “Distill discussion {thread.id} in my journal.”
         </p>
       )}
     </>

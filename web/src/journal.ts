@@ -76,6 +76,33 @@ export async function addQuestion(text: string, under?: string) {
   return q;
 }
 
+// John's standing instructions: sent to Claude with every conversation held in
+// the journal. An ordinary note, so every edit keeps the earlier version.
+export const STANDING_ID = 'note-standing-instructions';
+const STANDING_DEFAULT = `I've had a long career in technology including a software company that built big data analytics (before it was called big data) and then implemented real-time AI at the edge starting in 2016 (before it was cool). I'm retired now and enjoy diving into deep topics that I wasn't able to during my career. I love physics and have begun learning about biology.
+
+My journey with this started by realizing it's not possible to understand AI without understanding what intelligence is. This took me to consciousness, origin of life, information theory, reality (digging down into rabbit holes) and then to cultural evolution, language and other relevant topics. I believe that many of these topics are more related than most of my reading so far has addressed. I can imagine that there may not be many researchers looking broadly across many domains.
+
+My goal now is to organize my research knowledge base and zero in on better understanding how these pieces might fit together. At this point I want to bring some focus and then begin to articulate my own philosophy from what I've learned. As I make progress on that I'll bring it into this document to help guide the direction of my efforts.`;
+
+export async function ensureStandingInstructions(j: Journal): Promise<string> {
+  if (!j.byId.has(STANDING_ID)) {
+    const note: Note = {
+      ...spine('note'),
+      id: STANDING_ID,
+      type: 'note',
+      title: 'Standing instructions',
+      text: STANDING_DEFAULT,
+      originator: 'john',
+      review: 'accepted',
+      isTopic: false,
+      versions: [],
+    };
+    await backend.save([note], []);
+  }
+  return STANDING_ID;
+}
+
 // A discussion pasted in whole. The text is kept exactly as pasted.
 export async function addThread(title: string, date: string, rawText: string) {
   const t: Thread = {
