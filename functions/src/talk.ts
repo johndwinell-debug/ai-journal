@@ -325,7 +325,7 @@ export async function runDistill(opts: { store: Store; llm: Llm; model: string; 
     .map((r) => `- ${(r as { title?: string }).title ? (r as { title: string }).title + ': ' : ''}${(r as { text?: string }).text ?? ''}`);
 
   const system = [
-    "You distill a discussion from John's journal into the few things worth keeping. Call record_digest once.",
+    "You distill a discussion from John's journal into the few things worth keeping. Reply only by calling the record_digest tool, exactly once. Do not write any other text.",
     'Rules:',
     `- At most ${MAX_NOTES} notes, each a single idea. Prefer fewer, better notes.`,
     '- Ideas John stated himself get originator "john" and stay in his own words. Ideas Claude contributed get originator "claude".',
@@ -338,18 +338,22 @@ export async function runDistill(opts: { store: Store; llm: Llm; model: string; 
     .filter(Boolean)
     .join('\n');
 
-  const result = await llm
-    .stream({
-      model,
-      max_tokens: 4000,
-      system,
-      messages: [{ role: 'user', content: renderRecord(j, threadId) ?? '' }],
-      tools: [DIGEST_TOOL],
-      tool_choice: { type: 'tool', name: 'record_digest' },
-    })
-    .finalMessage();
-  const call = result.content.find((b) => b.type === 'tool_use' && b.name === 'record_digest');
-  if (!call) throw new Error('Claude did not return a digest.');
+  // Some models do not allow a tool to be forced, so the instruction asks for
+  // it, and a reply that comes back as plain text gets one reminder.
+  const messages: Array<{ role: 'user' | 'assistant'; content: unknown }> = [
+    { role: 'user', content: `${renderRecord(j, threadId) ?? ''}\n\nDistill this discussion now by calling record_digest.` },
+  ];
+  const findCall = (m: LlmMessage) => m.content.find((b) => b.type === 'tool_use' && b.name === 'record_digest');
+  const ask = () => llm.stream({ model, max_tokens: 4000, system, messages, tools: [DIGEST_TOOL] }).finalMessage();
+  let result = await ask();
+  let call = findCall(result);
+  if (!call) {
+    messages.push({ role: 'assistant', content: result.content.length ? result.content : 'Understood.' });
+    messages.push({ role: 'user', content: 'Call the record_digest tool now with the digest. Do not reply in text.' });
+    result = await ask();
+    call = findCall(result);
+  }
+  if (!call) throw new Error('Claude did not return a digest. Try Distill again.');
   const raw = call.input as { summary?: string };
   const digest = parseDigest(raw);
 

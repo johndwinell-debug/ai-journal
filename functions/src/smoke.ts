@@ -204,7 +204,12 @@ async function main() {
   const mine = afterD.records.find((r) => (r as { title?: string }).title === 'Mine') as Note;
   const yours = afterD.records.find((r) => (r as { title?: string }).title === 'Yours') as Note;
   check('distilling follows the same rules as saving from Claude', out1.notes === 2 && out1.questions === 1 && out1.sources === 0 && out1.waiting === 2 && mine.review === 'accepted' && yours.review === 'proposed' && out1.unmatched.join() === 'Nope');
-  check('distilling updates the summary and forces the digest tool', (afterD.records.find((r) => r.id === made.id) as { summary: string }).summary === 'Language as ratchet.' && (d1.asked[0].tool_choice as { name: string }).name === 'record_digest');
+  check('distilling updates the summary without forcing a tool', (afterD.records.find((r) => r.id === made.id) as { summary: string }).summary === 'Language as ratchet.' && d1.asked[0].tool_choice === undefined && (d1.asked[0].tools as Array<{ name: string }>)[0].name === 'record_digest');
+  const shy = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Here is a summary in prose.' }] }, digestReply([])]);
+  const nudged = await runDistill({ store, llm: shy.llm, model: 'm', threadId: made.id }).then(() => 'ok', () => 'failed');
+  check('a text-only reply gets one reminder to use the tool', nudged === 'ok' && shy.asked.length === 2 && /Call the record_digest tool now/.test(JSON.stringify(shy.asked[1].messages)));
+  const mute = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'a' }] }, { stop_reason: 'end_turn', content: [{ type: 'text', text: 'b' }] }]);
+  check('two text-only replies fail clearly', (await runDistill({ store, llm: mute.llm, model: 'm', threadId: made.id }).then(() => 'ok', (e) => String(e.message))) === 'Claude did not return a digest. Try Distill again.');
   const d2 = scripted([digestReply([])]);
   await runDistill({ store, llm: d2.llm, model: 'm', threadId: made.id });
   check('a second distillation is told what was already captured', /Do not repeat them/.test(String(d2.asked[0].system)) && /Mine: My idea\./.test(String(d2.asked[0].system)));
