@@ -10,6 +10,9 @@ export function Sources({ journal, onOpen, onReview }: { journal: Journal; onOpe
   const kept = journal.records
     .filter((r): r is Source => isSource(r) && r.kind !== 'book' && reviewOf(r) === 'accepted')
     .sort((a, b) => (b.savedAt ?? b.created).localeCompare(a.savedAt ?? a.created));
+  const [onlyAttention, setOnlyAttention] = useState(false);
+  const attention = kept.filter(needsAttention);
+  const shown = onlyAttention ? attention : kept;
   const [address, setAddress] = useState('');
   const [topic, setTopic] = useState('');
   const [busy, setBusy] = useState(false);
@@ -113,12 +116,25 @@ export function Sources({ journal, onOpen, onReview }: { journal: Journal; onOpe
       <section>
         <h2>Kept articles</h2>
         <CopySummary kept={kept} />
+        {attention.length > 0 && (
+          <div className="row" role="group" aria-label="Which articles to show">
+            <button className={onlyAttention ? 'quiet small' : 'small'} onClick={() => setOnlyAttention(false)}>
+              All {kept.length}
+            </button>
+            <button className={onlyAttention ? 'small' : 'quiet small'} onClick={() => setOnlyAttention(true)}>
+              Needs attention {attention.length}
+            </button>
+          </div>
+        )}
         {kept.length === 0 ? (
           <p className="empty">Nothing kept yet.</p>
+        ) : shown.length === 0 ? (
+          <p className="empty">Every kept article has a saved copy.</p>
         ) : (
           <ul className="threads">
-            {kept.map((s) => (
+            {shown.map((s) => (
               <li key={s.id}>
+                <CopyBadge source={s} />
                 <button className="linkish" onClick={() => onOpen(s.id)}>
                   {s.title}
                 </button>
@@ -134,6 +150,7 @@ export function Sources({ journal, onOpen, onReview }: { journal: Journal; onOpe
                     </a>
                   </>
                 )}
+                {needsAttention(s) && s.copyReason && <p className="meta">{s.copyReason}</p>}
               </li>
             ))}
           </ul>
@@ -216,4 +233,24 @@ function CopySummary({ kept }: { kept: Source[] }) {
       {error && <span className="warn">{error}</span>}
     </div>
   );
+}
+
+// Articles whose copy is missing, failed or incomplete: the ones to look at.
+function needsAttention(s: Source): boolean {
+  return !!s.url && s.copy !== 'full' && s.copy !== 'uploaded';
+}
+
+function CopyBadge({ source: s }: { source: Source }) {
+  if (!s.url) return null;
+  const [label, kind] =
+    s.copy === 'full'
+      ? ['Saved', 'ok']
+      : s.copy === 'uploaded'
+        ? ['Your PDF', 'ok']
+        : s.copy === 'partial'
+          ? ['Incomplete', 'partial']
+          : s.copy === 'failed'
+            ? ['Not saved', 'failed']
+            : ['Not saved yet', 'pending'];
+  return <span className={`copy-badge ${kind}`}>{label}</span>;
 }
