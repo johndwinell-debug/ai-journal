@@ -114,7 +114,7 @@ export function renderBriefing(j: Journal, topic: Note): string {
     out.push(
       '',
       '## Sources',
-      ...sources.map((s) => `- [${s.id}] ${s.title}${s.author ? ', ' + s.author : ''}${s.publisher ? ` (${s.publisher})` : ''} (${s.kind}, ${s.readingStatus})`),
+      ...sources.map((s) => `- [${s.id}] ${s.title}${s.author ? ', ' + s.author : ''}${s.publisher ? ` (${s.publisher})` : ''} (${s.kind}, ${s.readingStatus}${s.copy === 'full' || s.copy === 'uploaded' ? ', full text saved' : ''})`),
     );
   }
   if (threads.length) {
@@ -152,6 +152,8 @@ export function renderRecord(j: Journal, id: string): string | undefined {
     if (r.url) out.push(`link: ${r.url}${r.publisher ? ` (${r.publisher})` : ''}${r.savedAt ? ` | saved ${r.savedAt.slice(0, 10)}` : ''}`);
     if (r.summary) out.push('', r.summary);
     if (r.excerpt) out.push('', `Excerpt: ${r.excerpt}`);
+    if (r.copy === 'partial') out.push('', `Saved copy: partial (${r.copyReason ?? 'incomplete'}).`);
+    if (r.copy === 'failed') out.push('', `Saved copy: none (${r.copyReason ?? 'could not be saved'}).`);
   } else {
     out.push(`# Record ${r.id}`, '```json', JSON.stringify(r, null, 2), '```');
   }
@@ -167,4 +169,16 @@ export function renderRecord(j: Journal, id: string): string | undefined {
     }
   }
   return out.join('\n');
+}
+
+// The saved text of an article, appended when Claude opens a source.
+export async function withSavedText(rendered: string, rec: Rec | undefined, archive?: { getCopy(id: string): Promise<{ text?: string; status: string; truncated?: boolean } | undefined> }): Promise<string> {
+  if (!archive || !rec || rec.type !== 'source') return rendered;
+  const s = rec as Source;
+  if (!s.copy || s.copy === 'failed') return rendered;
+  const copy = await archive.getCopy(s.id);
+  if (!copy?.text) return rendered;
+  const limit = 80_000;
+  const text = copy.text.length > limit ? copy.text.slice(0, limit) + '\n\n(The saved text continues; this is the first part.)' : copy.text;
+  return `${rendered}\n\n## Saved text${copy.status === 'partial' ? ' (incomplete)' : ''}\n\n${text}`;
 }

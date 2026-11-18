@@ -85,3 +85,56 @@ export async function checkFeeds(): Promise<FeedResult[]> {
   const res = await call('/feeds/check', {});
   return ((await res.json()) as { results: FeedResult[] }).results;
 }
+
+export interface CopyCounts {
+  full: number;
+  partial: number;
+  failed: number;
+  uploaded: number;
+  remaining: number;
+}
+
+// Saves copies of the named articles, or of kept articles still missing one.
+export async function saveCopies(ids?: string[]): Promise<CopyCounts> {
+  const res = await call('/articles/save', ids ? { ids } : {});
+  return (await res.json()) as CopyCounts;
+}
+
+export interface ArticleCopy {
+  status: 'full' | 'partial' | 'failed' | 'uploaded';
+  reason?: string;
+  html?: string;
+  text?: string;
+  savedAt: string;
+  truncated?: boolean;
+}
+
+export async function getCopy(id: string): Promise<ArticleCopy> {
+  const res = await call('/articles/copy', { id });
+  return (await res.json()) as ArticleCopy;
+}
+
+export async function downloadPdf(id: string, title: string) {
+  const res = await call('/articles/pdf', { id });
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${title.replace(/[^\w\s-]+/g, '').trim().replace(/\s+/g, '-').slice(0, 80) || 'article'}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export async function uploadPdf(id: string, file: File) {
+  if (!backend.assistantUrl) throw new Error('Uploading needs the deployed journal.');
+  if (file.size > 25 * 1024 * 1024) throw new Error('That file is larger than 25 MB.');
+  const token = await backend.idToken();
+  const res = await fetch(`${backend.assistantUrl}/articles/upload?id=${encodeURIComponent(id)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf', authorization: `Bearer ${token}` },
+    body: file,
+  });
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Upload failed (${res.status}).`);
+}

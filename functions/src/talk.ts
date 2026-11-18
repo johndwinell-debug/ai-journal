@@ -1,7 +1,8 @@
 // Conversations held inside the journal: John talks with Claude through the
 // API, with his journal as the context. Nothing here writes notes; ideas are
 // captured only when John asks for a discussion to be distilled.
-import { findTopic, renderBriefing, renderMap, renderRecord, topics, type Journal } from './briefing.js';
+import { findTopic, renderBriefing, renderMap, renderRecord, topics, withSavedText, type Journal } from './briefing.js';
+import type { Archive } from './articles.js';
 import { applyDigest, MAX_NOTES, parseDigest } from './digest.js';
 import { newId, type Link, type Message, type Note, type Rec, type Thread } from './model.js';
 import type { Store } from './store.js';
@@ -50,18 +51,22 @@ const JOURNAL_TOOLS = [
   },
   {
     name: 'get_record',
-    description: 'The full text of one journal item by id: a note, question, source, or a past discussion with its transcript.',
+    description: 'The full text of one journal item by id: a note, question, a past discussion with its transcript, or a source including the saved text of an article.',
     input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
   },
 ];
 
-function runJournalTool(j: Journal, name: string, input: Record<string, unknown>): string {
+async function runJournalTool(j: Journal, name: string, input: Record<string, unknown>, archive?: Archive): Promise<string> {
   if (name === 'get_map') return renderMap(j);
   if (name === 'get_briefing') {
     const t = findTopic(j, String(input.topic ?? ''));
     return t ? renderBriefing(j, t) : `No topic matches "${input.topic}". Topics: ${topics(j).map((x) => x.title).join(', ')}.`;
   }
-  if (name === 'get_record') return renderRecord(j, String(input.id ?? '').trim()) ?? `No record has the id "${input.id}".`;
+  if (name === 'get_record') {
+    const id = String(input.id ?? '').trim();
+    const out = renderRecord(j, id);
+    return out ? withSavedText(out, j.records.find((r) => r.id === id), archive) : `No record has the id "${input.id}".`;
+  }
   return `Unknown tool ${name}.`;
 }
 
@@ -128,7 +133,7 @@ function titleFrom(message: string): string {
   return line.length > 70 ? line.slice(0, 67).trimEnd() + '...' : line || 'Untitled conversation';
 }
 
-export async function runChat(opts: { store: Store; llm: Llm; model: string; input: ChatInput; emit: Emit; now?: Date }): Promise<Thread> {
+export async function runChat(opts: { store: Store; llm: Llm; model: string; input: ChatInput; emit: Emit; now?: Date; archive?: Archive }): Promise<Thread> {
   const { store, llm, model, input, emit } = opts;
   const now = (opts.now ?? new Date()).toISOString();
   const message = input.message.trim();
@@ -189,7 +194,7 @@ export async function runChat(opts: { store: Store; llm: Llm; model: string; inp
         if (block.type !== 'tool_use') continue;
         const args = (block.input ?? {}) as Record<string, unknown>;
         emit({ type: 'status', text: statusFor(String(block.name), args) });
-        results.push({ type: 'tool_result', tool_use_id: block.id, content: runJournalTool(j, String(block.name), args) });
+        results.push({ type: 'tool_result', tool_use_id: block.id, content: await runJournalTool(j, String(block.name), args, opts.archive) });
       }
       messages.push({ role: 'user', content: results });
       continue;

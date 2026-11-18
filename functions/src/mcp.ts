@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { findTopic, renderBriefing, renderMap, renderRecord, topics } from './briefing.js';
+import { findTopic, renderBriefing, renderMap, renderRecord, topics, withSavedText } from './briefing.js';
+import type { Archive } from './articles.js';
 import { applyDigest, digestShape, MAX_NOTES } from './digest.js';
 import { newId, type Link, type Rec, type Thread } from './model.js';
 import type { Store } from './store.js';
@@ -10,7 +11,7 @@ const originator = z.enum(['john', 'claude']);
 
 // Builds the journal connector: the tools Claude sees once the journal is
 // added as a custom connector.
-export function buildServer(store: Store): McpServer {
+export function buildServer(store: Store, archive?: Archive): McpServer {
   const server = new McpServer({ name: 'ai-journal', version: '0.1.0' });
 
   server.registerTool(
@@ -48,12 +49,14 @@ export function buildServer(store: Store): McpServer {
     {
       title: 'Journal record',
       description:
-        'The full text of one journal item by id: a note, question, source, or a past discussion with its whole transcript.',
+        'The full text of one journal item by id: a note, question, a past discussion with its whole transcript, or a source, including the saved text of an article when the journal has one.',
       inputSchema: { id: z.string() },
     },
     async ({ id }) => {
-      const out = renderRecord(await store.all(), id.trim());
-      return text(out ?? `No record has the id "${id}".`);
+      const j = await store.all();
+      const out = renderRecord(j, id.trim());
+      if (!out) return text(`No record has the id "${id}".`);
+      return text(await withSavedText(out, j.records.find((r) => r.id === id.trim()), archive));
     },
   );
 

@@ -116,6 +116,28 @@ items should be filed under. The journal checks every feed each morning at
 The daily check is a scheduled function, which uses Google Cloud Scheduler.
 The first deploy may ask to enable it.
 
+## Saved copies of articles
+
+When you keep an article, the journal fetches the page, keeps a clean copy of
+the article (no menus, ads or banners) and makes a PDF from it. Open the
+article and use **Read saved copy** or **Download PDF**. Claude reads the saved
+text when it opens the article, in the journal and through the connector.
+
+Paywalled or blocked pages are marked incomplete or not saved. For those, open
+the article in your browser while signed in, print it, choose Save as PDF, and
+use **Upload your own PDF** on the article.
+
+The daily check also saves copies of kept articles that do not have one yet.
+Sources shows how many are saved and can save the rest straight away.
+
+Setup: PDFs are stored in Cloud Storage. In the Firebase console, open
+Build > Storage and choose Get started (production mode, any US location)
+before deploying. Nothing in Storage is open to browsers; the app fetches
+PDFs through the assistant, which checks your sign-in.
+
+The reader view shows images from the original site, so they can disappear if
+the site removes them. The PDF has PNG and JPEG images embedded and keeps them.
+
 ## Using the connector
 
 In any Claude conversation, with the connector enabled:
@@ -148,6 +170,8 @@ wait under Review, along with suggested links to topics.
 | A book's reading status places it under Books | `web/src/journal.ts` (`shelve`) |
 | Briefings show only accepted items and confirmed links | `functions/src/briefing.ts` |
 | Feed items are never kept without John's say | `functions/src/feeds.ts` |
+| Saved copies are cleaned of scripts before display | `functions/src/articles.ts`, `web/src/Detail.tsx` |
+| Saved copies and PDFs are reachable only by the owner | `storage.rules`, `functions/src/assistant.ts` |
 | Only the owner can read or write | `firestore.rules` |
 
 ## Known limits of this slice

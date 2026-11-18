@@ -1,6 +1,7 @@
 // Reading and changing the journal. Every change goes through here so the
 // rules agreed in the project document live in one place.
 import { backend } from './data';
+import { saveCopies } from './talkApi';
 import {
   newId,
   type Feed,
@@ -126,18 +127,22 @@ export async function addFeed(input: string, topicId?: string) {
   return feed;
 }
 
-// Keeping an article accepts it and files it under the feed's topic.
-export async function keepArticle(j: Journal, s: Source) {
+// Keeping an article accepts it, files it under the feed's topic, and asks
+// the journal to save a copy of it.
+export async function keepArticle(j: Journal, s: Source, saveCopy = true) {
   await accept(j, s);
   const feed = s.feedId ? j.byId.get(s.feedId) : undefined;
   const topicId = isFeed(feed) ? feed.topicId : undefined;
   if (topicId && j.byId.has(topicId) && !j.links.some((l) => l.from === s.id && l.to === topicId)) {
     await backend.save([], [makeLink(s.id, topicId, 'relates to')]);
   }
+  if (saveCopy && s.url && backend.assistantUrl) void saveCopies([s.id]).catch(() => {});
 }
 
 export async function keepAll(j: Journal, items: Source[]) {
-  for (const s of items) await keepArticle(j, s);
+  for (const s of items) await keepArticle(j, s, false);
+  const ids = items.filter((s) => s.url).map((s) => s.id);
+  if (ids.length && backend.assistantUrl) void saveCopies(ids).catch(() => {});
 }
 
 // A discussion pasted in whole. The text is kept exactly as pasted.

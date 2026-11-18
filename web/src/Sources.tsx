@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { backend } from './data';
 import { addFeed, feedAddress, isFeed, isSource, isTopic, label, patch, reviewOf, type Journal } from './journal';
 import type { Feed, Source } from './model';
-import { checkFeeds } from './talkApi';
+import { checkFeeds, saveCopies } from './talkApi';
 
 export function Sources({ journal, onOpen, onReview }: { journal: Journal; onOpen(id: string): void; onReview(): void }) {
   const feeds = journal.records.filter(isFeed).filter((f) => f.active);
@@ -112,6 +112,7 @@ export function Sources({ journal, onOpen, onReview }: { journal: Journal; onOpe
 
       <section>
         <h2>Kept articles</h2>
+        <CopySummary kept={kept} />
         {kept.length === 0 ? (
           <p className="empty">Nothing kept yet.</p>
         ) : (
@@ -173,6 +174,46 @@ function FeedRow({ feed, topics }: { feed: Feed; topics: Array<{ id: string; tit
           Stop checking
         </button>
       </div>
+    </div>
+  );
+}
+
+function CopySummary({ kept }: { kept: Source[] }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const withLink = kept.filter((s) => s.url);
+  if (withLink.length === 0) return null;
+  const count = (st: Source['copy']) => withLink.filter((s) => s.copy === st).length;
+  const missing = withLink.filter((s) => !s.copy).length;
+  const parts = [
+    `${count('full') + count('uploaded')} saved`,
+    count('partial') ? `${count('partial')} incomplete` : '',
+    count('failed') ? `${count('failed')} could not be saved` : '',
+    missing ? `${missing} not saved yet` : '',
+  ].filter(Boolean);
+  return (
+    <div className="row">
+      <span className="meta">Copies: {parts.join(' · ')}.</span>
+      {missing > 0 && backend.assistantUrl && (
+        <button
+          className="quiet small"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError('');
+            try {
+              await saveCopies();
+            } catch (e) {
+              setError(String((e as Error).message ?? e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? 'Saving… (about 5 seconds each)' : `Save ${Math.min(missing, 15)} now`}
+        </button>
+      )}
+      {error && <span className="warn">{error}</span>}
     </div>
   );
 }

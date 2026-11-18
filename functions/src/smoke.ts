@@ -9,6 +9,9 @@ import type { Link, Note } from './model.js';
 import { MemoryStore } from './store.js';
 import { handleAssistant } from './assistant.js';
 import { cleanLink, parseFeed, runFeedCheck } from './feeds.js';
+import { buildPdf, classify, extractArticle, MemoryArchive, pdfText, saveArticle, saveMissing, uploadCopy, type FetchPage } from './articles.js';
+import { withSavedText } from './briefing.js';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { runChat, runDistill, STANDING_INSTRUCTIONS_ID, toApiMessages, type Llm, type LlmMessage } from './talk.js';
 
 // A stand-in for the Claude API: plays back scripted replies and records what it was asked.
@@ -222,7 +225,7 @@ async function main() {
   const api = express();
   api.use(express.json());
   const apiLlm = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Hi John.' }] }]);
-  api.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store, llm: apiLlm.llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good' }));
+  api.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store, llm: apiLlm.llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good', archive: new MemoryArchive() }));
   const apiListener = api.listen(0);
   const base = `http://127.0.0.1:${(apiListener.address() as AddressInfo).port}/assistant`;
   const post = (path: string, token: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
@@ -306,7 +309,7 @@ async function main() {
 
   const fapi = express();
   fapi.use(express.json());
-  fapi.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store: fstore, llm: scripted([]).llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good', fetchText: serve(flip(item1)) }));
+  fapi.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store: fstore, llm: scripted([]).llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good', fetchText: serve(flip(item1)), archive: new MemoryArchive() }));
   const fl = fapi.listen(0);
   const fbase = `http://127.0.0.1:${(fl.address() as AddressInfo).port}/assistant`;
   const fpost = (token: string) => fetch(fbase + '/feeds/check', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{}' });
@@ -314,6 +317,109 @@ async function main() {
   const now2 = (await (await fpost('good')).json()) as { results: Array<{ title: string; added: number }> };
   check('check now reports per feed', now2.results.length === 1 && now2.results[0].title === 'KNOWLEDGEBASE' && now2.results[0].added === 0);
   fl.close();
+
+  // ---- Article copies
+  const para = (n: number) => `<p>Paragraph ${n} on how specification\u2019s role changes when agents write the code \u2014 a long passage that goes on for a while so the article reads as a real one, with enough words to be counted as full text by any reasonable measure of length.</p>`;
+  const articleHtml = `<!doctype html><html><head><title>Specs for Agents | Computer.org</title>
+    <meta property="og:site_name" content="IEEE Computer Society"><meta name="author" content="Ashif Anwar">
+    <script>window.track = 1</script></head><body>
+    <nav><a href="/">Home</a> <a href="/menu">Menu item one</a> Subscribe to our newsletter</nav>
+    <div class="ad">BUY NOW advertisement</div>
+    <article><h1>Specifications for Agentic Software Engineering</h1>
+      <p class="byline">By Ashif Anwar</p>
+      ${para(1)}${para(2)}
+      <h2>Why it matters</h2>
+      ${para(3)}
+      <figure><img src="/img/chart.png" onerror="alert(1)"><figcaption>Generated code volume over time</figcaption></figure>
+      <ul><li>Write the <em>spec</em> first</li><li>Let agents implement it</li></ul>
+      <blockquote><p>Specs are the new source code.</p></blockquote>
+      <p><img src="https://cdn.example.org/photo.jpg"> <img src="https://cdn.example.org/hero.webp"></p>
+      ${para(4)}${para(5)}
+      <p>Read the <a href="https://example.org/paper" onclick="steal()">full paper</a>.</p>
+    </article>
+    <footer>Copyright footer text</footer></body></html>`;
+  const png = readFileSync('/home/claude/check/fixtures/chart.png');
+  const jpg = readFileSync('/home/claude/check/fixtures/photo.jpg');
+  const pages: Record<string, { status: number; contentType: string; body: Buffer }> = {
+    'https://www.computer.org/specs': { status: 200, contentType: 'text/html; charset=utf-8', body: Buffer.from(articleHtml) },
+    'https://www.computer.org/img/chart.png': { status: 200, contentType: 'image/png', body: png },
+    'https://cdn.example.org/photo.jpg': { status: 200, contentType: 'image/jpeg', body: jpg },
+    'https://cdn.example.org/hero.webp': { status: 200, contentType: 'image/webp', body: Buffer.from('RIFF....WEBPVP8 ') },
+    'https://paywalled.example.com/a': { status: 200, contentType: 'text/html', body: Buffer.from('<html><body><article><h1>Big story</h1><p>The opening lines of a big story that you can read for free before the wall comes down on you here.</p><p>Subscribe now to continue reading. Already a subscriber? Sign in.</p></article></body></html>') },
+    'https://blocked.example.com/a': { status: 403, contentType: 'text/html', body: Buffer.from('Forbidden') },
+  };
+  const fetchPage: FetchPage = async (url) => {
+    const pg = pages[url];
+    if (!pg) throw new Error('not found in test');
+    return { ...pg, url };
+  };
+
+  const ex = extractArticle(articleHtml, 'https://www.computer.org/specs')!;
+  check('extracts the article and leaves the rest of the page', /Paragraph 3/.test(ex.text) && /Why it matters/.test(ex.text) && !/Menu item one|BUY NOW|Copyright footer/.test(ex.text));
+  check('strips scripts and event handlers', !/onerror|onclick|<script|alert\(1\)|steal\(\)/.test(ex.html) && /target="_blank"/.test(ex.html));
+  check('keeps the site name and author', ex.siteName === 'IEEE Computer Society' && /Ashif Anwar/.test(ex.byline ?? ''));
+  check('a short paywalled page is marked partial', classify(extractArticle(pages['https://paywalled.example.com/a'].body.toString(), 'https://paywalled.example.com/a')!.text).status === 'partial');
+
+  const trimmed = (await import('./articles.js')).dropLeadingTitle(ex.html, 'Specifications for Agentic Software Engineering');
+  check('a byline alone at the top is dropped too', !/By Ashif/.test((await import('./articles.js')).dropLeadingTitle('<p>By Ashif Anwar</p><p>Body text.</p>', 'Other title')));
+  check('the repeated title and byline are dropped from the body', !/<h1>|By Ashif Anwar/.test(trimmed) && /Why it matters/.test(trimmed));
+  const built = await buildPdf(trimmed, { title: 'Specifications for Agentic Software Engineering', byline: 'Ashif Anwar', siteName: 'IEEE Computer Society', url: 'https://www.computer.org/specs', savedAt: '2026-11-18T02:00:00Z' }, fetchPage);
+  writeFileSync('/home/claude/check/sample-article.pdf', built.pdf);
+  const pdfWords = await pdfText(built.pdf);
+  check('makes a PDF that holds the article', built.pdf.subarray(0, 5).toString() === '%PDF-' && /Specifications for Agentic/.test(pdfWords) && /Paragraph 5/.test(pdfWords) && /specification\u2019s/.test(pdfWords) && /Saved to AI Journal/.test(pdfWords));
+  check('embeds PNG and JPEG images and skips others', built.images === 2 && built.imagesSkipped === 1, `${built.images} embedded, ${built.imagesSkipped} skipped`);
+
+  const astore = new MemoryStore();
+  const archive = new MemoryArchive();
+  const src = (id: string, url: string | undefined, extra: Record<string, unknown> = {}) => ({ id, type: 'source', created: now, updated: now, origin: 'feed:x', kind: 'article', title: id, url, readingStatus: 'queued', review: 'accepted', ...extra }) as never;
+  await astore.write([src('source-a1', 'https://www.computer.org/specs', { title: 'Specifications for Agentic Software Engineering' }), src('source-a2', 'https://paywalled.example.com/a'), src('source-a3', 'https://blocked.example.com/a'), src('source-book', 'https://books.example/x', { kind: 'book' }), src('source-old', 'https://x.example', { created: '2020-01-01T00:00:00Z', copy: 'full' })], []);
+  const c1 = await saveArticle({ store: astore, archive, fetchPage }, (await astore.all()).records.find((r) => r.id === 'source-a1') as never);
+  const s1 = (await astore.all()).records.find((r) => r.id === 'source-a1') as { copy?: string; author?: string };
+  check('saving a kept article stores the copy, the PDF and its status', c1.status === 'full' && !!archive.files.get('articles/source-a1.pdf') && archive.copies.get('source-a1')?.html?.includes('Why it matters') === true && s1.copy === 'full' && /Ashif Anwar/.test(s1.author ?? ''));
+  const sweep = await saveMissing({ store: astore, archive, fetchPage }, { limit: 10 });
+  const s2 = (await astore.all()).records.find((r) => r.id === 'source-a2') as { copy?: string; copyReason?: string };
+  const s3 = (await astore.all()).records.find((r) => r.id === 'source-a3') as { copy?: string; copyReason?: string };
+  check('the catch-up skips books and articles already saved', sweep.full === 0 && sweep.partial === 1 && sweep.failed === 1 && sweep.remaining === 0, JSON.stringify(sweep));
+  check('paywalled and blocked pages say why', s2.copy === 'partial' && /paywall/.test(s2.copyReason ?? '') && s3.copy === 'failed' && /HTTP 403.*upload the PDF/.test(s3.copyReason ?? ''));
+  check('a paywalled PDF says it is incomplete', /This copy is incomplete/.test(await pdfText(archive.files.get('articles/source-a2.pdf')!)));
+  pages['https://reports.example.org/r.pdf'] = { status: 200, contentType: 'application/pdf', body: built.pdf };
+  await astore.write([src('source-pdf', 'https://reports.example.org/r.pdf')], []);
+  const c4 = await saveArticle({ store: astore, archive, fetchPage }, (await astore.all()).records.find((r) => r.id === 'source-pdf') as never);
+  check('a link to a PDF is kept as it is, with its text', c4.status === 'full' && archive.files.get('articles/source-pdf.pdf')?.equals(built.pdf) === true && /Paragraph 2/.test(c4.text ?? ''));
+  const up = await uploadCopy({ store: astore, archive }, 'source-a3', built.pdf);
+  check('an uploaded PDF replaces a failed copy', up.status === 'uploaded' && ((await astore.all()).records.find((r) => r.id === 'source-a3') as { copy?: string }).copy === 'uploaded' && /Paragraph 4/.test(archive.copies.get('source-a3')?.text ?? ''));
+  check('uploads must be PDFs', (await uploadCopy({ store: astore, archive }, 'source-a3', Buffer.from('<html>')).then(() => 'ok', (e) => String(e.message))) === 'That file is not a PDF.');
+
+  const j2 = await astore.all();
+  const opened = await withSavedText('# Source: x', j2.records.find((r) => r.id === 'source-a1'), archive);
+  check('Claude gets the saved text when it opens an article', /## Saved text\n\nSpecifications|## Saved text\n\n[\s\S]*Paragraph 5/.test(opened));
+  const partialOpen = await withSavedText('# Source: y', j2.records.find((r) => r.id === 'source-a2'), archive);
+  check('and is told when the text is incomplete', /## Saved text \(incomplete\)/.test(partialOpen));
+  const viaChat = scripted([
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'g1', name: 'get_record', input: { id: 'source-a1' } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Read it.' }] },
+  ]);
+  await runChat({ store: astore, llm: viaChat.llm, model: 'm', input: { message: 'What does the specs article argue?' }, emit: () => {}, archive });
+  check('in a journal conversation too', /Paragraph 3/.test(JSON.stringify(viaChat.asked[1].messages)));
+
+  const aapi = express();
+  aapi.use(express.raw({ type: 'application/pdf', limit: '30mb' }));
+  aapi.use(express.json());
+  aapi.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store: astore, llm: scripted([]).llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good', archive, fetchPage }));
+  const al = aapi.listen(0);
+  const abase = `http://127.0.0.1:${(al.address() as AddressInfo).port}/assistant`;
+  const apost = (path: string, token: string, body: unknown) => fetch(abase + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  check('only the owner can reach saved articles', (await apost('/articles/pdf', 'bad', { id: 'source-a1' })).status === 401 && (await apost('/articles/save', 'bad', {})).status === 401);
+  const dl = await apost('/articles/pdf', 'good', { id: 'source-a1' });
+  const dlBytes = Buffer.from(await dl.arrayBuffer());
+  check('the PDF downloads with a readable file name', dl.headers.get('content-type') === 'application/pdf' && /filename="Specifications-for-Agentic-Software-Engineering\.pdf"/.test(dl.headers.get('content-disposition') ?? '') && dlBytes.subarray(0, 5).toString() === '%PDF-');
+  const cp = (await (await apost('/articles/copy', 'good', { id: 'source-a1' })).json()) as { html?: string; status: string };
+  check('the clean copy can be read', cp.status === 'full' && /Why it matters/.test(cp.html ?? ''));
+  const upRes = await fetch(abase + '/articles/upload?id=source-a2', { method: 'POST', headers: { 'content-type': 'application/pdf', authorization: 'Bearer good' }, body: new Uint8Array(built.pdf) });
+  check('a PDF can be uploaded from the app', upRes.status === 200 && ((await upRes.json()) as { status: string }).status === 'uploaded');
+  const saveRes = (await (await apost('/articles/save', 'good', { ids: ['source-a1'] })).json()) as { full: number };
+  check('saving can be retried for one article', saveRes.full === 1);
+  al.close();
 }
 
 main().catch((e) => {

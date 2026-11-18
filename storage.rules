@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Saved article PDFs are reached only through the journal's assistant, which
+// checks the owner's sign-in. Nothing in Storage is open to browsers directly.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -74,6 +74,10 @@ export interface Source extends Spine {
   tags?: string[]; // the feed's own categories
   feedId?: string;
   feedGuid?: string;
+  // A saved copy of the article: full text, partial (paywalled), failed, or a PDF John uploaded
+  copy?: 'full' | 'partial' | 'failed' | 'uploaded';
+  copyReason?: string;
+  copiedAt?: string;
 }
 
 // A feed the journal checks for new items: a Flipboard magazine or any RSS feed.

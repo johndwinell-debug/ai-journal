@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
 import { Reply } from './Talk';
+import { downloadPdf, getCopy, saveCopies, uploadPdf, type ArticleCopy } from './talkApi';
 import { backend } from './data';
 import {
   addNote,
@@ -174,6 +176,100 @@ Not distilled yet. Choose “Continue this discussion”, then Distill. Or in Cl
   );
 }
 
+// The saved copy of an article: read it, download its PDF, or attach your own.
+function CopyPanel({ source }: { source: Source }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [copy, setCopy] = useState<ArticleCopy | null>(null);
+  const [open, setOpen] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  if (!backend.assistantUrl) return null;
+
+  const act = async (what: string, fn: () => Promise<unknown>) => {
+    setBusy(what);
+    setError('');
+    try {
+      await fn();
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    } finally {
+      setBusy('');
+    }
+  };
+  const read = () =>
+    act('read', async () => {
+      if (open) return setOpen(false);
+      setCopy(await getCopy(source.id));
+      setOpen(true);
+    });
+  const status = source.copy;
+  const when = source.copiedAt ? ` · ${source.copiedAt.slice(0, 10)}` : '';
+  const line =
+    status === 'full'
+      ? `Full text${when}`
+      : status === 'uploaded'
+        ? `Your uploaded PDF${when}`
+        : status === 'partial'
+          ? `Incomplete${when}. ${source.copyReason ?? ''}`
+          : status === 'failed'
+            ? `Not saved. ${source.copyReason ?? ''}`
+            : 'No saved copy yet.';
+
+  return (
+    <section>
+      <h3>Saved copy</h3>
+      <p className={status === 'failed' || status === 'partial' ? 'warn' : 'meta'}>{busy === 'save' ? 'Saving a copy…' : line}</p>
+      <div className="row">
+        {(status === 'full' || status === 'partial' || status === 'uploaded') && (
+          <>
+            <button className="quiet small" onClick={read} disabled={!!busy}>
+              {open ? 'Hide saved copy' : 'Read saved copy'}
+            </button>
+            <button className="quiet small" onClick={() => act('pdf', () => downloadPdf(source.id, source.title))} disabled={!!busy}>
+              {busy === 'pdf' ? 'Preparing…' : 'Download PDF'}
+            </button>
+          </>
+        )}
+        {status !== 'full' && status !== 'uploaded' && (
+          <button className="quiet small" onClick={() => act('save', () => saveCopies([source.id]))} disabled={!!busy}>
+            {status ? 'Try again' : 'Save a copy now'}
+          </button>
+        )}
+        {status !== 'full' && (
+          <button className="quiet small" onClick={() => fileInput.current?.click()} disabled={!!busy}>
+            {busy === 'upload' ? 'Uploading…' : 'Upload your own PDF'}
+          </button>
+        )}
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/pdf"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void act('upload', () => uploadPdf(source.id, file));
+          }}
+        />
+      </div>
+      {status !== 'full' && status !== 'uploaded' && (
+        <p className="meta">For a paywalled article: open it in your browser while signed in, print it, choose Save as PDF, then upload it here.</p>
+      )}
+      {error && <p className="warn">{error}</p>}
+      {open && copy && (
+        <div className="article-copy">
+          {copy.truncated && <p className="meta">This copy is long, so only the first part is shown here. The PDF holds all of it.</p>}
+          {copy.html ? (
+            <div className="md" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(copy.html, { ADD_ATTR: ['target'] }) }} />
+          ) : (
+            <p className="body">{copy.text || 'No text could be read from this PDF. Download it to view.'}</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function NoteBody({ note, onFocus }: { note: Note; onFocus(id: string): void }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(note.title);
@@ -286,6 +382,7 @@ function SourceBody({ journal, source }: { journal: Journal; source: Source }) {
       {source.summary && <p className="body">{source.summary}</p>}
       {source.excerpt && <p className="comment">{source.excerpt}</p>}
       {source.tags && source.tags.length > 0 && <p className="meta">Feed tags: {source.tags.join(', ')}</p>}
+      {source.url && source.kind !== 'book' && reviewOf(source) === 'accepted' && <CopyPanel key={source.id} source={source} />}
       <label className="row">
         Reading status
         <select
