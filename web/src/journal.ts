@@ -3,6 +3,7 @@
 import { backend } from './data';
 import {
   newId,
+  type Feed,
   type Link,
   type LinkType,
   type Note,
@@ -24,6 +25,8 @@ export const isNote = (r: Rec | undefined): r is Note => r?.type === 'note';
 export const isQuestion = (r: Rec | undefined): r is Question => r?.type === 'question';
 export const isSource = (r: Rec | undefined): r is Source => r?.type === 'source';
 export const isThread = (r: Rec | undefined): r is Thread => r?.type === 'thread';
+export const isFeed = (r: Rec | undefined): r is Feed => r?.type === 'feed';
+export const fromFeed = (r: Rec | undefined): r is Source => isSource(r) && !!r.feedId;
 export const isTopic = (r: Rec | undefined): r is Note => isNote(r) && r.isTopic;
 
 export function reviewOf(r: Rec): string {
@@ -42,7 +45,8 @@ export function kindOf(r: Rec): string {
   if (isTopic(r)) return 'Topic';
   if (isNote(r)) return 'Note';
   if (isQuestion(r)) return 'Question';
-  if (isSource(r)) return r.kind === 'book' ? 'Book' : 'Source';
+  if (isSource(r)) return ({ book: 'Book', article: 'Article', episode: 'Episode', video: 'Video', other: 'Source' } as const)[r.kind] ?? 'Source';
+  if (isFeed(r)) return 'Feed';
   if (isThread(r)) return 'Discussion';
   return r.type;
 }
@@ -101,6 +105,39 @@ export async function ensureStandingInstructions(j: Journal): Promise<string> {
     await backend.save([note], []);
   }
   return STANDING_ID;
+}
+
+// ---- Feeds
+
+// A Flipboard magazine's page address becomes its feed address.
+export function feedAddress(input: string): string {
+  const raw = input.trim();
+  const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+  if (/(^|\.)flipboard\.com$/i.test(url.hostname) && !url.pathname.endsWith('.rss')) {
+    url.pathname = url.pathname.replace(/\/+$/, '') + '.rss';
+    url.search = '';
+  }
+  return url.toString();
+}
+
+export async function addFeed(input: string, topicId?: string) {
+  const feed: Feed = { ...spine('feed'), type: 'feed', title: '', url: feedAddress(input), topicId, active: true };
+  await backend.save([feed], []);
+  return feed;
+}
+
+// Keeping an article accepts it and files it under the feed's topic.
+export async function keepArticle(j: Journal, s: Source) {
+  await accept(j, s);
+  const feed = s.feedId ? j.byId.get(s.feedId) : undefined;
+  const topicId = isFeed(feed) ? feed.topicId : undefined;
+  if (topicId && j.byId.has(topicId) && !j.links.some((l) => l.from === s.id && l.to === topicId)) {
+    await backend.save([], [makeLink(s.id, topicId, 'relates to')]);
+  }
+}
+
+export async function keepAll(j: Journal, items: Source[]) {
+  for (const s of items) await keepArticle(j, s);
 }
 
 // A discussion pasted in whole. The text is kept exactly as pasted.

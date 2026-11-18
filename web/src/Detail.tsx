@@ -273,8 +273,19 @@ function SourceBody({ journal, source }: { journal: Journal; source: Source }) {
       <p className="meta">
         {source.kind}
         {source.author && ` · ${source.author}`}
+        {source.publisher && ` · ${source.publisher}`}
+        {source.savedAt && ` · saved ${source.savedAt.slice(0, 10)}`}
       </p>
+      {source.url && (
+        <p>
+          <a href={source.url} target="_blank" rel="noreferrer">
+            Open the original ↗
+          </a>
+        </p>
+      )}
       {source.summary && <p className="body">{source.summary}</p>}
+      {source.excerpt && <p className="comment">{source.excerpt}</p>}
+      {source.tags && source.tags.length > 0 && <p className="meta">Feed tags: {source.tags.join(', ')}</p>}
       <label className="row">
         Reading status
         <select
@@ -303,7 +314,7 @@ function AddUnder({ journal, rec, onOpen }: { journal: Journal; rec: Note; onOpe
     setTarget('');
   };
   const candidates = journal.records
-    .filter((r) => r.id !== rec.id && reviewOf(r) === 'accepted' && r.type !== 'trail')
+    .filter((r) => r.id !== rec.id && reviewOf(r) === 'accepted' && r.type !== 'trail' && r.type !== 'feed')
     .sort((a, b) => label(a).localeCompare(label(b)));
 
   if (!mode) {

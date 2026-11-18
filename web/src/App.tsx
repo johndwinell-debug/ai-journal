@@ -5,10 +5,11 @@ import { addThread, isThread, isTopic, label, reviewOf, type Journal } from './j
 import { MapView } from './MapView';
 import type { Link, Rec } from './model';
 import { pending, Review } from './Review';
+import { Sources } from './Sources';
 import { Talk, type TalkStart } from './Talk';
 import { seedData } from './seed';
 
-type Tab = 'map' | 'talk' | 'review' | 'discussions';
+type Tab = 'map' | 'talk' | 'review' | 'discussions' | 'sources';
 const TRAIL_KEY = 'ai-journal-trail';
 
 function loadTrail(): string[] {
@@ -213,6 +214,9 @@ function JournalApp({ user }: { user: User }) {
           <button className={tab === 'discussions' ? 'on' : ''} onClick={() => setTab('discussions')}>
             Discussions
           </button>
+          <button className={tab === 'sources' ? 'on' : ''} onClick={() => setTab('sources')}>
+            Sources
+          </button>
         </nav>
         <span className="who">
           {backend.demo ? 'Demo journal (this browser only)' : user.name}
@@ -285,6 +289,7 @@ function JournalApp({ user }: { user: User }) {
             ))}
           {tab === 'talk' && <Talk journal={journal} start={talk} onStart={setTalk} onOpen={open} onReview={() => setTab('review')} />}
           {tab === 'review' && <Review journal={journal} onOpen={open} />}
+          {tab === 'sources' && <Sources journal={journal} onOpen={open} onReview={() => setTab('review')} />}
           {tab === 'discussions' && (
             <>
               <NewDiscussion onCreated={open} />

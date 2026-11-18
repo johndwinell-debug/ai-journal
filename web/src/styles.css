@@ -150,3 +150,9 @@ button.small { padding: 2px 10px; font-size: 0.85rem; }
 .md h1, .md h2, .md h3 { font-size: 1.05rem; color: var(--ink); margin: 0.8em 0 0.3em; }
 .md blockquote { margin: 0.5em 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--quiet); }
 .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid var(--line); padding: 3px 8px; }
+
+.badge.article, .badge.episode, .badge.video { border-color: var(--source); color: var(--source); }
+.map .node.article circle, .map .node.episode circle, .map .node.video circle { fill: var(--source); stroke: var(--source); }
+.sources section { margin-bottom: 24px; }
+.top nav { flex-wrap: wrap; }
+button:disabled { opacity: 0.5; cursor: default; }

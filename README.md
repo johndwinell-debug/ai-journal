@@ -13,8 +13,10 @@ This is the first thin slice. It contains:
 - **`functions/` (assistant)** Conversations with Claude inside the journal,
   through the Claude API, with optional web search and distilling.
 
-Not built yet: the other sources (Audible, Flipboard, podcasts, YouTube,
-browsers).
+- **`functions/` (feeds)** A daily check of Flipboard magazines and other
+  RSS feeds.
+
+Not built yet: Audible, YouTube and browser history.
 
 ## Try it without any setup
 
@@ -103,6 +105,17 @@ Models are set in `functions/src/index.ts` (`CHAT_MODEL`, `DISTILL_MODEL`) and
 can be overridden in a `functions/.env` file, for example
 `CHAT_MODEL=claude-sonnet-5-5`.
 
+## Feeds (Flipboard magazines and other RSS)
+
+Open **Sources**, paste a public Flipboard magazine's address (the `.rss`
+ending is added for you) or any RSS or Atom feed, and choose the topic kept
+items should be filed under. The journal checks every feed each morning at
+06:00 Eastern; **Check now** runs it straight away. New items wait in
+**Review** under "From your feeds", where you keep or dismiss them.
+
+The daily check is a scheduled function, which uses Google Cloud Scheduler.
+The first deploy may ask to enable it.
+
 ## Using the connector
 
 In any Claude conversation, with the connector enabled:
@@ -134,6 +147,7 @@ wait under Review, along with suggested links to topics.
 | A confirmed suggestion moves to the manual layer | `web/src/journal.ts` (`confirmLink`) |
 | A book's reading status places it under Books | `web/src/journal.ts` (`shelve`) |
 | Briefings show only accepted items and confirmed links | `functions/src/briefing.ts` |
+| Feed items are never kept without John's say | `functions/src/feeds.ts` |
 | Only the owner can read or write | `firestore.rules` |
 
 ## Known limits of this slice

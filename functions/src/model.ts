@@ -2,7 +2,7 @@
 // A small fixed spine on every record; everything else is flexible.
 // Keep in step with web/src/model.ts.
 
-export type RecordType = 'note' | 'question' | 'source' | 'passage' | 'thread' | 'trail';
+export type RecordType = 'note' | 'question' | 'source' | 'passage' | 'thread' | 'trail' | 'feed';
 export type Originator = 'john' | 'claude';
 export type Review = 'proposed' | 'accepted' | 'dismissed';
 export type LinkType =
@@ -66,6 +66,27 @@ export interface Source extends Spine {
   summary?: string;
   summaryBasis?: 'claude-knowledge' | 'researched';
   review: Review;
+  // Articles that arrive from a feed (a Flipboard magazine, a blog, a podcast)
+  excerpt?: string;
+  publisher?: string;
+  image?: string;
+  savedAt?: string; // when it was added to the feed, ISO time
+  tags?: string[]; // the feed's own categories
+  feedId?: string;
+  feedGuid?: string;
+}
+
+// A feed the journal checks for new items: a Flipboard magazine or any RSS feed.
+export interface Feed extends Spine {
+  type: 'feed';
+  title: string;
+  url: string;
+  topicId?: string; // kept items are linked to this topic
+  active: boolean;
+  lastChecked?: string;
+  lastError?: string;
+  lastAdded?: number;
+  lastSeen?: number; // how many items the feed held at the last check
 }
 
 export interface Message {
@@ -85,7 +106,7 @@ export interface Thread extends Spine {
   rawText?: string; // a transcript pasted in whole, not split into turns
 }
 
-export type Rec = Note | Question | Source | Thread | (Spine & Record<string, unknown>);
+export type Rec = Note | Question | Source | Thread | Feed | (Spine & Record<string, unknown>);
 
 export interface Link {
   id: string;

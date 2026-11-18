@@ -7,13 +7,16 @@ import {
   isNote,
   isQuestion,
   isSource,
+  fromFeed,
+  keepAll,
+  keepArticle,
   kindOf,
   label,
   originatorName,
   reviewOf,
   type Journal,
 } from './journal';
-import type { Link, Rec } from './model';
+import type { Link, Rec, Source } from './model';
 
 export function pending(journal: Journal): { records: Rec[]; links: Link[] } {
   const records = journal.records.filter((r) => reviewOf(r) === 'proposed');
@@ -28,12 +31,15 @@ export function pending(journal: Journal): { records: Rec[]; links: Link[] } {
 }
 
 export function Review({ journal, onOpen }: { journal: Journal; onOpen(id: string): void }) {
-  const { records, links } = pending(journal);
-  if (records.length === 0 && links.length === 0) {
+  const { records: all, links } = pending(journal);
+  const inbox = all.filter(fromFeed).sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? ''));
+  const records = all.filter((r) => !fromFeed(r));
+  if (all.length === 0 && links.length === 0) {
     return <p className="empty">Nothing is waiting for review.</p>;
   }
   return (
     <div className="review">
+      {inbox.length > 0 && <FeedInbox journal={journal} items={inbox} onOpen={onOpen} />}
       {records.length > 0 && (
         <section>
           <h2>Proposed by Claude</h2>
@@ -69,6 +75,65 @@ export function Review({ journal, onOpen }: { journal: Journal; onOpen(id: strin
         </section>
       )}
     </div>
+  );
+}
+
+function FeedInbox({ journal, items, onOpen }: { journal: Journal; items: Source[]; onOpen(id: string): void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <section>
+      <div className="row">
+        <h2 style={{ marginRight: 'auto' }}>From your feeds</h2>
+        <button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await keepAll(journal, items);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? 'Keeping…' : `Keep all ${items.length}`}
+        </button>
+      </div>
+      <p className="meta">Articles you saved. Kept ones are filed under the topic you chose for their feed.</p>
+      {items.map((s) => {
+        const feed = s.feedId ? journal.byId.get(s.feedId) : undefined;
+        return (
+          <div key={s.id} className="card">
+            <p className="meta">
+              <span className={`badge ${kindOf(s).toLowerCase()}`}>{kindOf(s)}</span> {(feed as { title?: string } | undefined)?.title || 'Your feed'}
+              {s.savedAt && ` · saved ${s.savedAt.slice(0, 10)}`}
+            </p>
+            <h3>
+              <button className="linkish" onClick={() => onOpen(s.id)}>
+                {s.title}
+              </button>
+            </h3>
+            <p className="meta">
+              {[s.publisher, s.author].filter(Boolean).join(' · ')}
+              {s.url && (
+                <>
+                  {' · '}
+                  <a href={s.url} target="_blank" rel="noreferrer">
+                    Open article ↗
+                  </a>
+                </>
+              )}
+            </p>
+            {s.excerpt && <p>{s.excerpt}</p>}
+            <div className="row">
+              <button onClick={() => keepArticle(journal, s)}>Keep</button>
+              <button className="quiet" onClick={() => dismiss(s)}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </section>
   );
 }
 

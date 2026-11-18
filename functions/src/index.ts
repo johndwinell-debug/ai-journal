@@ -4,6 +4,8 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import { onRequest } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { runFeedCheck } from './feeds.js';
 import { handleAssistant } from './assistant.js';
 import { handleConnector } from './http.js';
 import { FirestoreStore } from './store.js';
@@ -59,5 +61,14 @@ export const assistant = onRequest(
         }
       },
     });
+  },
+);
+
+// Checks every feed once a day for newly saved articles.
+export const feeds = onSchedule(
+  { schedule: 'every day 06:00', timeZone: 'America/New_York', region: 'us-east1', timeoutSeconds: 300, memory: '256MiB' },
+  async () => {
+    const results = await runFeedCheck(new FirestoreStore(getFirestore()));
+    console.log('feed check', JSON.stringify(results));
   },
 );

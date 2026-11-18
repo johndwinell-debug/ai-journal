@@ -72,3 +72,16 @@ export async function distill(threadId: string): Promise<DistillResult> {
   const res = await call('/distill', { threadId });
   return (await res.json()) as DistillResult;
 }
+
+export interface FeedResult {
+  feedId: string;
+  title: string;
+  seen: number;
+  added: number;
+  error?: string;
+}
+
+export async function checkFeeds(): Promise<FeedResult[]> {
+  const res = await call('/feeds/check', {});
+  return ((await res.json()) as { results: FeedResult[] }).results;
+}

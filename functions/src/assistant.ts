@@ -1,6 +1,7 @@
 // The web address the journal app calls for conversations and distilling.
 // Only the journal's owner, signed in through Firebase, can use it.
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { runFeedCheck, type FetchText } from './feeds.js';
 import { runChat, runDistill, type ChatInput, type Emit, type Llm } from './talk.js';
 import type { Store } from './store.js';
 
@@ -13,6 +14,7 @@ export interface AssistantDeps {
   distillModel: string;
   // Resolves to true when the request carries the owner's sign-in.
   isOwner(bearerToken: string | undefined): Promise<boolean>;
+  fetchText?: FetchText; // for tests; the real web otherwise
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -37,6 +39,15 @@ export async function handleAssistant(req: Req, res: ServerResponse, deps: Assis
 
   const path = (req.path ?? req.url ?? '').split('?')[0].replace(/\/+$/, '');
   const body = (req.body ?? {}) as Record<string, unknown>;
+
+  if (path.endsWith('/feeds/check')) {
+    try {
+      return json(res, 200, { results: await runFeedCheck(deps.store, deps.fetchText) });
+    } catch (err) {
+      console.error('feed check failed', err);
+      return json(res, 500, { error: friendly(err) });
+    }
+  }
 
   if (path.endsWith('/distill')) {
     try {

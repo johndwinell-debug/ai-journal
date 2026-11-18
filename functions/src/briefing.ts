@@ -114,7 +114,7 @@ export function renderBriefing(j: Journal, topic: Note): string {
     out.push(
       '',
       '## Sources',
-      ...sources.map((s) => `- [${s.id}] ${s.title}${s.author ? ', ' + s.author : ''} (${s.kind}, ${s.readingStatus})`),
+      ...sources.map((s) => `- [${s.id}] ${s.title}${s.author ? ', ' + s.author : ''}${s.publisher ? ` (${s.publisher})` : ''} (${s.kind}, ${s.readingStatus})`),
     );
   }
   if (threads.length) {
@@ -149,7 +149,9 @@ export function renderRecord(j: Journal, id: string): string | undefined {
     out.push(`# Question`, `id: ${r.id} | originator: ${r.originator} | state: ${r.state}`, '', r.text);
   } else if (isSource(r)) {
     out.push(`# Source: ${r.title}`, `id: ${r.id} | kind: ${r.kind} | author: ${r.author ?? 'unknown'} | reading status: ${r.readingStatus}`);
+    if (r.url) out.push(`link: ${r.url}${r.publisher ? ` (${r.publisher})` : ''}${r.savedAt ? ` | saved ${r.savedAt.slice(0, 10)}` : ''}`);
     if (r.summary) out.push('', r.summary);
+    if (r.excerpt) out.push('', `Excerpt: ${r.excerpt}`);
   } else {
     out.push(`# Record ${r.id}`, '```json', JSON.stringify(r, null, 2), '```');
   }

@@ -8,6 +8,7 @@ import { handleConnector } from './http.js';
 import type { Link, Note } from './model.js';
 import { MemoryStore } from './store.js';
 import { handleAssistant } from './assistant.js';
+import { cleanLink, parseFeed, runFeedCheck } from './feeds.js';
 import { runChat, runDistill, STANDING_INSTRUCTIONS_ID, toApiMessages, type Llm, type LlmMessage } from './talk.js';
 
 // A stand-in for the Claude API: plays back scripted replies and records what it was asked.
@@ -232,6 +233,87 @@ async function main() {
   const failed = await (await post('/chat', 'good', { message: 'again' })).text();
   check('a failure is reported in the stream', /"type":"error"/.test(failed));
   apiListener.close();
+
+  // ---- Feeds: John's Flipboard magazine, as the feed returned it
+  const flip = (items: string) => `<?xml version="1.0"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>KNOWLEDGEBASE</title>
+    <link>https://flipboard.com/@jdwinell/knowledgebase-s4ob3m6mz</link>
+    <atom:link href="https://flipboard.com/@jdwinell/knowledgebase-s4ob3m6my.rss" rel="self" type="application/rss+xml"/>
+    <description/>
+    <generator>Flipboard</generator>${items}
+  </channel>
+</rss>`;
+  const item1 = `
+    <item>
+      <title>Specifications for Agentic Software Engineering</title>
+      <link>https://www.computer.org/publications/tech-news/research/specification-driven-agentic-software?utm_source=flipboard&amp;utm_content=other</link>
+      <guid isPermaLink="false">flipboard-_WiepfhWQLi-m8_iT1PQnQ:a:60308655-1794964179</guid>
+      <pubDate>Wed, 18 Nov 2026 01:09:39 GMT</pubDate>
+      <description>Most engineering organizations have run the same experiment: hand developers an AI coding assistant, watch generated code volume climb, and …</description>
+      <source url="https://flipboard.com/@jdwinell/knowledgebase-s4ob3m6mz">KNOWLEDGEBASE</source>
+      <category domain="https://flipboard.com/topic/agenticai">Agentic AI</category>
+      <category domain="https://flipboard.com/topic/technology">Technology</category>
+      <author>Ashif Anwar</author>
+      <response/>
+      <media:content url="https://www.computer.org/wp-content/uploads/2026/10/OAI_-640-x-480-px-2.png" medium="image" type="image/png" width="640" height="480"/>
+    </item>`;
+  const item2 = `
+    <item>
+      <title>Don&#8217;t be fooled&#8212;LLMs don&#8217;t reason</title>
+      <link>https://www.technologyreview.com/2026/11/10/llms-reason/?utm_source=flipboard</link>
+      <guid isPermaLink="false">flipboard-zuLpVU5OQqahe2PaIRSKlQ</guid>
+      <pubDate>Tue, 17 Nov 2026 14:00:00 GMT</pubDate>
+      <description>&lt;p&gt;An &lt;b&gt;argument&lt;/b&gt; about reasoning.&lt;/p&gt;</description>
+      <category>Artificial Intelligence</category>
+      <author>Thore Graepel</author>
+    </item>`;
+  const parsed = parseFeed(flip(item1));
+  const it = parsed.items[0];
+  check('reads the Flipboard feed', parsed.title === 'KNOWLEDGEBASE' && parsed.items.length === 1 && it.title === 'Specifications for Agentic Software Engineering' && it.author === 'Ashif Anwar' && it.tags.join() === 'Agentic AI,Technology' && /OAI_-640/.test(it.image ?? '') && it.publishedAt === '2026-11-18T01:09:39.000Z');
+  check('drops tracking from links', it.link === 'https://www.computer.org/publications/tech-news/research/specification-driven-agentic-software' && cleanLink('https://a.org/x?id=3&utm_medium=y') === 'https://a.org/x?id=3');
+  const p2 = parseFeed(flip(item2)).items[0];
+  check('decodes entities and strips markup', p2.title === 'Don\u2019t be fooled\u2014LLMs don\u2019t reason' && p2.excerpt === 'An argument about reasoning.');
+  const atom = parseFeed('<feed xmlns="http://www.w3.org/2005/Atom"><title>Blog</title><entry><id>tag:1</id><title>Post</title><link rel="alternate" href="https://b.org/p"/><updated>2026-11-01T00:00:00Z</updated><summary>Hi</summary></entry></feed>');
+  check('reads Atom feeds too', atom.title === 'Blog' && atom.items[0].link === 'https://b.org/p' && atom.items[0].guid === 'tag:1');
+  const audio = parseFeed('<rss><channel><title>Pod</title><item><title>Ep 1</title><link>https://p.fm/1</link><enclosure url="https://p.fm/1.mp3" type="audio/mpeg"/></item></channel></rss>');
+  check('a podcast item is an episode', audio.items[0].kind === 'episode');
+  check('a page that is not a feed is reported', (() => { try { parseFeed('<html><body>hi</body></html>'); return false; } catch (e) { return /RSS or Atom/.test(String(e)); } })());
+
+  const fstore = new MemoryStore();
+  await fstore.write([
+    topic('note-ai', 'AI', ''),
+    { id: 'feed-kb', type: 'feed', created: now, updated: now, origin: 'app', title: '', url: 'https://flipboard.com/@jdwinell/knowledgebase-s4ob3m6my.rss', topicId: 'note-ai', active: true } as never,
+    { id: 'feed-off', type: 'feed', created: now, updated: now, origin: 'app', title: 'Old', url: 'https://x.org/rss', active: false } as never,
+    { id: 'source-had', type: 'source', created: now, updated: now, origin: 'app', kind: 'article', title: 'Already here', url: 'https://www.technologyreview.com/2026/11/10/llms-reason/', readingStatus: 'read', review: 'accepted' } as never,
+  ], []);
+  const asked2: string[] = [];
+  const serve = (xml: string) => async (url: string) => { asked2.push(url); return xml; };
+  const r1 = await runFeedCheck(fstore, serve(flip(item1 + item2)));
+  const st1 = await fstore.all();
+  const arrived = st1.records.filter((r) => r.type === 'source' && (r as { feedId?: string }).feedId === 'feed-kb') as Array<{ review: string; readingStatus: string; publisher: string; savedAt: string }>;
+  const kb = st1.records.find((r) => r.id === 'feed-kb') as { title: string; lastSeen: number; lastAdded: number; lastError?: string };
+  check('new items arrive waiting for review', r1.length === 1 && r1[0].added === 1 && arrived.length === 1 && arrived[0].review === 'proposed' && arrived[0].publisher === 'computer.org' && arrived[0].savedAt === '2026-11-18T01:09:39.000Z');
+  check('an article already in the journal is not added again', r1[0].seen === 2 && !st1.records.some((r) => (r as { title?: string }).title?.startsWith('Don')));
+  check('switched-off feeds are skipped', asked2.length === 1);
+  check('the feed takes its name from the channel', kb.title === 'KNOWLEDGEBASE' && kb.lastSeen === 2 && kb.lastAdded === 1 && !kb.lastError);
+  const r2 = await runFeedCheck(fstore, serve(flip(item1 + item2)));
+  check('checking again adds nothing', r2[0].added === 0 && (await fstore.all()).records.filter((r) => r.type === 'source').length === 2);
+  const r3 = await runFeedCheck(fstore, async () => { throw new Error('The feed answered with an error (HTTP 403).'); });
+  const kb3 = (await fstore.all()).records.find((r) => r.id === 'feed-kb') as { lastError?: string; title: string };
+  check('a failing feed records why', r3[0].error === 'The feed answered with an error (HTTP 403).' && kb3.lastError === r3[0].error && kb3.title === 'KNOWLEDGEBASE');
+
+  const fapi = express();
+  fapi.use(express.json());
+  fapi.all('/assistant/*rest', (req, res) => handleAssistant(req, res, { store: fstore, llm: scripted([]).llm, chatModel: 'm', distillModel: 'm', isOwner: async (t) => t === 'good', fetchText: serve(flip(item1)) }));
+  const fl = fapi.listen(0);
+  const fbase = `http://127.0.0.1:${(fl.address() as AddressInfo).port}/assistant`;
+  const fpost = (token: string) => fetch(fbase + '/feeds/check', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{}' });
+  check('only the owner can run a feed check', (await fpost('bad')).status === 401);
+  const now2 = (await (await fpost('good')).json()) as { results: Array<{ title: string; added: number }> };
+  check('check now reports per feed', now2.results.length === 1 && now2.results[0].title === 'KNOWLEDGEBASE' && now2.results[0].added === 0);
+  fl.close();
 }
 
 main().catch((e) => {
